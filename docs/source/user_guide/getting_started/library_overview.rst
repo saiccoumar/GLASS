@@ -70,11 +70,11 @@ interchangeable — switch by changing the namespace prefix when profiling shows
 one is faster at a given size. They preserve the same one-block ``__device__``
 calling convention, so a single kernel can mix hand-rolled and vendor-backed
 primitives without leaving the block. ``glass::warp::`` is a **warp-per-problem**
-variant covering a selected set (``dot``, ``axpy``, ``copy``, ``scal``,
-``reduce``, ``gemv``, ``iamax``, ``gemm``, ``cholDecomp_InPlace``, ``trsv`` /
-``trsm`` / ``trsm_transpose``, and the composed ``posv`` SPD solve); the warps
-run independently for intra-block parallelism, and it requires a full 32-lane
-warp.
+variant that mirrors most of the block surface: the L1 reduction/vector family
+plus ``gemv`` / ``gemm`` / ``syrk`` / ``syr2k``, the factor/solve chain
+(``potrf`` / ``trsv`` / ``trsm`` / ``posv`` / ``ldlt`` / ``ldlt_solve``), and the
+tensor/congruence/riccati families; the warps run independently for intra-block
+parallelism, and it requires a full 32-lane warp.
 
 .. note::
 
@@ -95,6 +95,17 @@ inter-warp reduction) suffixed forms — e.g. ``glass::reduce_lowmem`` /
 single-block): ``glass::bdmv`` (block-tridiagonal matvec) and ``glass::pcg``
 (preconditioned conjugate gradient) for the block-tridiagonal SPD systems of
 trajectory optimization / MPC — see :doc:`../concepts/block_tridiagonal`.
+
+.. warning::
+
+   **Factorizations do not check their input by default.** ``CHECK`` defaults to
+   ``false``, so ``potrf`` / ``posv`` on a non-SPD matrix (or a non-pivoted
+   ``ldlt`` hitting a zero pivot) **silently produces NaN/Inf** — there is no
+   error return. To detect failure, instantiate with ``CHECK=true`` and pass an
+   ``s_fail`` flag (and, for ``ldlt``, the optional ``s_inertia`` pivot-sign
+   counts); the reporting path compiles out entirely when ``CHECK`` is off. See
+   ``examples/14_ldlt_solve.cu`` for the pattern on both a good and a
+   zero-pivot matrix.
 
 Choosing the right backend
 --------------------------

@@ -45,7 +45,7 @@ __host__ __device__ constexpr std::size_t riccati_scratch_bytes() {
  * @param B  Control Jacobian (NX×NU, column-major).
  * @param R  Control cost (NU×NU, SPD, column-major).
  * @param Kgain  Out gain `K` (NU×NX, column-major).
- * @param s_scratch  Shared scratch of `riccati_scratch_bytes<NX,NU>()` elements.
+ * @param s_scratch  Shared scratch of `riccati_scratch_bytes<T,NX,NU>()` bytes.
  * @param rho     Diagonal shift on `S` when REGULARIZE (ignored otherwise).
  * @param s_fail  Optional flag: set to 1 if `S` (after the shift) is not PD, else 0.
  */
@@ -90,7 +90,7 @@ namespace warp {
      * @tparam TRAILING_SYNC  Emit a trailing `__syncwarp()` (default true).
      * @param P,A,B,R  Inputs (column-major; see the block overload).
      * @param Kgain  Out gain `K` (NU×NX, column-major).
-     * @param s_scratch Shared scratch of `riccati_scratch_bytes<NX,NU>()` elements (per warp).
+     * @param s_scratch Shared scratch of `riccati_scratch_bytes<T,NX,NU>()` bytes (per warp).
      * @param rho    Diagonal shift on `S` when REGULARIZE (ignored otherwise).
      * @param s_fail Optional flag: set to 1 if `S` (after the shift) is not PD, else 0.
      */

@@ -21,6 +21,18 @@ The ``*_reduced`` family flips the mapping: **one warp owns one output**, and it
 All ship in the three SIMT surfaces (``glass::`` block, ``glass::warp::``,
 ``glass::cgrps::``).
 
+.. warning::
+
+   **Expressiveness / fusion only — not a throughput path.** Measured on a quiet
+   RTX 5090 (sm_120), the contraction-parallel decomposition is **slower than the
+   plain serial in-thread contraction in 47 of 48 swept shapes**, often by
+   10–100× (full table: ``bench/REDUCED_SWEEP_RESULTS.md``), and the
+   :cpp:func:`glass::suggested_use_reduced` picker declines it almost everywhere.
+   **Prefer the plain ops** (``gemm`` / ``gemv`` / ``syrk``) for throughput;
+   reach for this family only for the fused forms (``tensor_vec_contract``,
+   ``vec_tensor_vec``, ``congruence_sym``, ``bilinear``) that the serial surface
+   cannot express in one call.
+
 The honest win-condition
 ------------------------
 

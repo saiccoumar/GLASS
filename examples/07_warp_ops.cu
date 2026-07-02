@@ -24,7 +24,7 @@ __global__ void warp_gemm_kernel(float *A, float *B, float *C) {
 
 // SPD solve A x = b within one warp: factor A = L Lᵀ, then forward + transpose solve.
 __global__ void warp_posv_kernel(float *A, float *b) {
-    glass::warp::cholDecomp_InPlace<float, 3>(A);
+    glass::warp::potrf<float, 3>(A);
     glass::warp::trsm<float, 3>(A, b);
     glass::warp::trsm_transpose<float, 3>(A, b);
 }

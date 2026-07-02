@@ -33,7 +33,7 @@ warp per problem, for packing many small problems into a block):
 | Interface | Scope | What it is | Header |
 |-----------|-------|------------|--------|
 | `glass::` (Block) | block | Hand-rolled pure-SIMT (`threadIdx`/`blockDim`). No deps. | `glass.cuh` |
-| `glass::warp::` (Warp) | warp | Single-warp SIMT (`__shfl_*_sync`), *selected* L1/L2/L3 ops; `glass::warp::posv` is the composed warp-per-problem SPD solve (chol → forward/back `trsv`). Inline in the base L1/L2/L3 headers. | via `glass.cuh` |
+| `glass::warp::` (Warp) | warp | Single-warp SIMT (`__shfl_*_sync`) mirroring most of the block surface — L1 reductions/vector ops, gemv/gemm/syrk, the factor/solve chain, tensor/congruence/riccati. Inline in the base L1/L2/L3 headers. | via `glass.cuh` |
 | `glass::nvidia::` (Nvidia) | block | CUB / cuBLASDx / cuSOLVERDx, auto-dispatched by size. Needs MathDx (`MATHDX_ROOT`). | `glass-nvidia.cuh` |
 
 `glass::cgrps::` (header `glass-cgrps.cuh`) is a **convenience alias** of the Block
@@ -58,12 +58,13 @@ Recent L1/L2/L3 additions (all single-block, thread-count invariant): `iamax`
 both `AAᵀ` and `AᵀA` via a `TRANSPOSE` flag, `FillMode` Lower/Upper/Full); `ldlt` /
 `ldlt_solve` (L3 symmetric-indefinite LDLᵀ, non-pivoted, signature reserves
 `bool pivot`/`piv` for a future Bunch-Kaufman path); `posv` / `potrs` (L3 SPD
-solve = chol + 2×`trsv`); and **K-way fused** `invertMatrix` / `cholDecomp_InPlace`
+solve = chol + 2×`trsv`); and **K-way fused** `inv` / `potrf`
 (invert/factor K independent matrices interleaved over one block — `inv2`/`inv3`,
-the 2-/3-matrix `invertMatrix` wrappers, are now thin wrappers). The warp surface adds `warp::{dot,axpy,copy,scal,gemv,trsv,iamax}`
-+ the composed `warp::posv`.
+the 2-/3-matrix `inv` wrappers, are now thin wrappers). The `warp::` surface mirrors most of the block L1
+reduction/vector family plus `gemv`/`gemm`/`syrk`/`syr2k`, the factor/solve chain
+(`potrf`/`trsv`/`trsm`/`posv`/`ldlt`/`ldlt_solve`), and the tensor/congruence/riccati families.
 
-Robust/perf variants (perf user vs robustness user): `invertMatrix_pivoted`
+Robust/perf variants (perf user vs robustness user): `inv_pivoted`
 (partial-pivoting Gauss-Jordan, robust on small/zero leading pivots), `ldlt(...,
 pivot=true, piv)` (symmetric 1×1 diagonal pivoting; full Bunch-Kaufman 2×2 still
 deferred), and multi-RHS `posv`/`potrs` (`(n, nrhs, A, B)` — factor once, solve N
@@ -78,7 +79,7 @@ and split the contraction across its lanes; **tensor** ops `tensor_vec_contract`
 `congruence_sym` (XᵀMX) / `bilinear` (XᵀMY); and `riccati_gain`
 (= congruence + bilinear + checked `posv`). Robustness rides as **compile-out
 `bool` flags** (default-false, byte-identical PTX when off): `CHECK` on
-`cholDecomp_InPlace` / `ldlt` (+ `inertia`), `REGULARIZE`+`CHECK` on multi-RHS
+`potrf` / `ldlt` (+ `inertia`), `REGULARIZE`+`CHECK` on multi-RHS
 `posv` (the fused regularize→factor→solve). **Naming rule:** namespace = scope,
 different decomposition = a name suffix (`_reduced`), additive behavior = a
 compile-out flag (see `concepts/namespaces.rst`). **Perf caveat (measured, sm_120,
