@@ -138,27 +138,27 @@ static void launch_gemm_ct(bool warp, int th, int ta, int tb, int rmc, int nb,
 
 // ─── inv kernels ──────────────────────────────────────────────────────────────
 __global__ void k_inv_cg(int n, float* A, float* scratch) {
-    glass::cgrps::invertMatrix(n, A, scratch);
+    glass::cgrps::inv(n, A, scratch);
 }
 __global__ void k_inv_simple(int n, float* A, float* scratch) {
-    glass::invertMatrix(n, A, scratch);
+    glass::inv(n, A, scratch);
 }
 __global__ void k_inv_pivot_simple(int n, float* A, float* scratch) {
-    glass::invertMatrix_pivoted(n, A, scratch);
+    glass::inv_pivoted(n, A, scratch);
 }
 __global__ void k_inv2_simple(int dimA, int dimB, int maxd, float* A, float* B, float* scratch) {
-    glass::invertMatrix(dimA, dimB, maxd, A, B, scratch);
+    glass::inv(dimA, dimB, maxd, A, B, scratch);
 }
 __global__ void k_inv3_simple(int dimA, int dimB, int dimC, int maxd, float* A, float* B, float* C, float* scratch) {
-    glass::invertMatrix(dimA, dimB, dimC, maxd, A, B, C, scratch);
+    glass::inv(dimA, dimB, dimC, maxd, A, B, C, scratch);
 }
 
 // ─── chol kernels ─────────────────────────────────────────────────────────────
 __global__ void k_chol_cg(int n, float* A) {
-    glass::cgrps::cholDecomp_InPlace(n, A);
+    glass::cgrps::potrf(n, A);
 }
 __global__ void k_chol_simple(int n, float* A) {
-    glass::cholDecomp_InPlace(n, A);
+    glass::potrf(n, A);
 }
 
 // ─── trsm kernels ─────────────────────────────────────────────────────────────
@@ -171,7 +171,7 @@ __global__ void k_trsm_simple(int n, float* L, float* b) {
 
 // ─── warp SPD solve (N=7) ─────────────────────────────────────────────────────
 __global__ void k_posv_warp_7(float* A, float* b) {
-    glass::warp::cholDecomp_InPlace<float, 7>(A);
+    glass::warp::potrf<float, 7>(A);
     glass::warp::trsm<float, 7>(A, b);
     glass::warp::trsm_transpose<float, 7>(A, b);
 }

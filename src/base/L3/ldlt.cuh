@@ -2,7 +2,7 @@
 #include <cstdint>
 // glass.cuh includes L1/iamax.cuh (glass::iamax_lowmem) before this header,
 // so the pivot path below calls it unqualified — same intra-namespace dependency
-// convention as posv.cuh → cholDecomp_InPlace / trsv (no local #include).
+// convention as posv.cuh → potrf / trsv (no local #include).
 
 /**
  * @brief Scratch size in bytes for `ldlt`.
@@ -33,7 +33,7 @@ __host__ __device__ constexpr std::size_t ldlt_scratch_bytes(uint32_t n)
  *   - the implicit unit diagonal of `L` is NOT stored,
  *   - the upper triangle keeps its input values (untouched).
  *
- * Unlike Cholesky (`cholDecomp_InPlace`), there is **no square root**: `D_j` may
+ * Unlike Cholesky (`potrf`), there is **no square root**: `D_j` may
  * be negative or zero, which is exactly what lets LDLᵀ factor an indefinite
  * symmetric matrix (e.g. a KKT / saddle-point system) that has no Cholesky
  * factor. The recurrence is, for column `j`:

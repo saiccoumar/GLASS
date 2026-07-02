@@ -60,7 +60,7 @@ static double elapsed_ms(struct timespec a, struct timespec b) {
 template<typename T,int N> __global__ void kb_dot (T* x, T* y) { int p=blockIdx.x; glass::dot<T,N>(x+p*N, y+p*N); }
 template<typename T,int N> __global__ void kb_gemv(T* A, T* x, T* y) { int p=blockIdx.x; glass::gemv<T,N,N>((T)1, A+(size_t)p*N*N, x+p*N, (T)0, y+p*N); }
 template<typename T,int N> __global__ void kb_gemm(T* A, T* B, T* C) { int p=blockIdx.x; glass::gemm<T,N,N,N>((T)1, A+(size_t)p*N*N, B+(size_t)p*N*N, (T)0, C+(size_t)p*N*N); }
-template<typename T,int N> __global__ void kb_chol(T* A) { int p=blockIdx.x; glass::cholDecomp_InPlace<T,N>(A+(size_t)p*N*N); }
+template<typename T,int N> __global__ void kb_chol(T* A) { int p=blockIdx.x; glass::potrf<T,N>(A+(size_t)p*N*N); }
 template<typename T,int N> __global__ void kb_trsv(T* A, T* x) { int p=blockIdx.x; glass::trsv<T,N>(A+(size_t)p*N*N, x+p*N); }
 template<typename T,int N> __global__ void kb_posv(T* A, T* b) { int p=blockIdx.x; glass::posv<T,N>(A+(size_t)p*N*N, b+p*N); }
 
@@ -68,7 +68,7 @@ template<typename T,int N> __global__ void kb_posv(T* A, T* b) { int p=blockIdx.
 template<typename T,int N> __global__ void kw_dot (T* x, T* y, int np) { int p=blockIdx.x*blockDim.y+threadIdx.y; if(p>=np)return; T r=glass::warp::dot<T,N>(x+p*N, y+p*N); if((threadIdx.x&31)==0) y[p*N]=r; }
 template<typename T,int N> __global__ void kw_gemv(T* A, T* x, T* y, int np) { int p=blockIdx.x*blockDim.y+threadIdx.y; if(p>=np)return; glass::warp::gemv<T,N,N>((T)1, A+(size_t)p*N*N, x+p*N, (T)0, y+p*N); }
 template<typename T,int N> __global__ void kw_gemm(T* A, T* B, T* C, int np) { int p=blockIdx.x*blockDim.y+threadIdx.y; if(p>=np)return; glass::warp::gemm<T,N,N,N>((T)1, A+(size_t)p*N*N, B+(size_t)p*N*N, (T)0, C+(size_t)p*N*N); }
-template<typename T,int N> __global__ void kw_chol(T* A, int np) { int p=blockIdx.x*blockDim.y+threadIdx.y; if(p>=np)return; glass::warp::cholDecomp_InPlace<T,N>(A+(size_t)p*N*N); }
+template<typename T,int N> __global__ void kw_chol(T* A, int np) { int p=blockIdx.x*blockDim.y+threadIdx.y; if(p>=np)return; glass::warp::potrf<T,N>(A+(size_t)p*N*N); }
 template<typename T,int N> __global__ void kw_trsv(T* A, T* x, int np) { int p=blockIdx.x*blockDim.y+threadIdx.y; if(p>=np)return; glass::warp::trsv<T,N>(A+(size_t)p*N*N, x+p*N); }
 template<typename T,int N> __global__ void kw_posv(T* A, T* b, int np) { int p=blockIdx.x*blockDim.y+threadIdx.y; if(p>=np)return; glass::warp::posv<T,N>(A+(size_t)p*N*N, b+p*N); }
 
@@ -172,7 +172,7 @@ namespace glass { namespace nvidia {
 }}
 template<typename T,int N> __global__ void kn_chol(T* A) {
     extern __shared__ char s[]; int p=blockIdx.x;
-    glass::nvidia::cholDecomp_InPlace<T,N,NV_LP_TB>(A+(size_t)p*N*N, s);
+    glass::nvidia::potrf<T,N,NV_LP_TB>(A+(size_t)p*N*N, s);
 }
 template<typename T,int N> __global__ void kn_trsv(T* A, T* x) {
     extern __shared__ char s[]; int p=blockIdx.x;
@@ -256,7 +256,7 @@ static double nv_op_time(Op op, T* A, T* B, T* C, T* x, T* y, int reps) {
 #if MEGA_NV_LAPACK
     if constexpr (nv_lapack_ok<T,N>()) {
         if (op == CHOL) {
-            size_t smem = glass::nvidia::cholDecomp_InPlace_scratch_bytes<T,N,NV_LP_TB>();
+            size_t smem = glass::nvidia::potrf_scratch_bytes<T,N,NV_LP_TB>();
             return nv_timed(kn_chol<T,N>, smem, [&]{ kn_chol<T,N><<<grid,NV_LP_TB,smem>>>(A); }, reps);
         }
         if (op == TRSV) {

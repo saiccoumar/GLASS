@@ -3,7 +3,7 @@ L3 — Matrix Operations
 
 General matrix-matrix products (``gemm`` and its tiled / strided / batched /
 indexed variants), matrix inversion (single, **partial-pivoting**
-``invertMatrix_pivoted``, and **K-way fused** multi-matrix),
+``inv_pivoted``, and **K-way fused** multi-matrix),
 Cholesky factorization (single and **K-way fused**), triangular solves, symmetric
 rank-k / rank-2k updates (``syrk`` / ``syr2k``), symmetric-indefinite ``LDLᵀ``
 (``ldlt``), and SPD solves (``posv`` / ``potrs``). The GEMM family follows the
@@ -12,7 +12,7 @@ standard BLAS convention (``C`` is M×N, contraction K) with ``TRANSPOSE_A`` /
 row-major operand is just a transpose, so per-operand row-major flags were
 removed; see :doc:`../user_guide/concepts/backend_dispatch` for how the dispatch
 GEMM chooses a path. Single-warp (``glass::warp::``) variants of ``gemm``,
-``cholDecomp_InPlace``, and ``trsm`` render inline beside their block-scoped
+``potrf``, and ``trsm`` render inline beside their block-scoped
 sibling; see :doc:`warp`.
 
 gemm
@@ -67,7 +67,7 @@ Matrix inverse
 Cholesky
 --------
 
-.. doxygenfile:: src/base/L3/chol_InPlace.cuh
+.. doxygenfile:: src/base/L3/potrf.cuh
 
 Triangular solve (trsm)
 -----------------------

@@ -183,18 +183,18 @@ def test_set_const(bins, n, version):
     assert np.allclose(result, np.full(n, alpha, dtype=np.float32), rtol=RTOL, atol=ATOL)
 
 
-# ─── loadIdentity ─────────────────────────────────────────────────────────────
+# ─── set_identity ─────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("n", [4, 8, 16])
 @pytest.mark.parametrize("version", CG_SIMPLE)
 def test_loadIdentity(bins, n, version):
-    result = run_op(bins["l1"], "loadIdentity", version, args=[n], inputs=[])
+    result = run_op(bins["l1"], "set_identity", version, args=[n], inputs=[])
     # column-major identity: reshape as (n, n) Fortran order
     mat = result.reshape(n, n, order='F')
     assert np.allclose(mat, np.eye(n, dtype=np.float32), rtol=RTOL, atol=ATOL)
 
 
-# ─── addI ─────────────────────────────────────────────────────────────────────
+# ─── add_identity ─────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("n", [4, 8, 16])
 @pytest.mark.parametrize("version", CG_SIMPLE)
@@ -202,7 +202,7 @@ def test_addI(bins, n, version):
     alpha = 0.5
     A = RNG.random((n, n)).astype(np.float32)
     A_col = np.asfortranarray(A)
-    result = run_op(bins["l1"], "addI", version, args=[n, alpha], inputs=[A_col.ravel(order='F')])
+    result = run_op(bins["l1"], "add_identity", version, args=[n, alpha], inputs=[A_col.ravel(order='F')])
     expected = A + alpha * np.eye(n, dtype=np.float32)
     mat = result.reshape(n, n, order='F')
     assert np.allclose(mat, expected, rtol=RTOL, atol=ATOL)

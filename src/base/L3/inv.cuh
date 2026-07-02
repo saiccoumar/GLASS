@@ -22,7 +22,7 @@
 // Shared body: Gauss-Jordan inversion; barrier policy supplies rank/size + the
 // two per-pivot syncs, shared by the glass:: and cgrps:: surfaces.
 template <typename Bar, typename T>
-__device__ void invertMatrix_impl(Bar bar, uint32_t dimA, T *A, T *s_scratch)
+__device__ void inv_impl(Bar bar, uint32_t dimA, T *A, T *s_scratch)
 {
     uint32_t rank = bar.rank(), size = bar.size();
     for (unsigned pivRC = 0; pivRC < dimA; pivRC++) {
@@ -43,15 +43,15 @@ __device__ void invertMatrix_impl(Bar bar, uint32_t dimA, T *A, T *s_scratch)
 }
 
 template <typename T>
-__device__ void invertMatrix(uint32_t dimA, T *A, T *s_scratch)
+__device__ void inv(uint32_t dimA, T *A, T *s_scratch)
 {
-    invertMatrix_impl<BlockBarrier, T>(BlockBarrier{}, dimA, A, s_scratch);
+    inv_impl<BlockBarrier, T>(BlockBarrier{}, dimA, A, s_scratch);
 }
 
 /**
  * @brief Compile-time-size in-place matrix inverse (augmented `[A | I]` Gauss-Jordan).
  *
- * Same as the runtime `invertMatrix` but with the dimension as a template
+ * Same as the runtime `inv` but with the dimension as a template
  * parameter. NumPy equivalent: `Ainv = np.linalg.inv(A)`.
  *
  * @tparam T  Scalar type.
@@ -61,30 +61,30 @@ __device__ void invertMatrix(uint32_t dimA, T *A, T *s_scratch)
  * @param s_scratch  Shared scratch of `(2*N + 1) * sizeof(T)` bytes.
  */
 template <typename T, uint32_t N>
-__device__ void invertMatrix(T *A, T *s_scratch)
+__device__ void inv(T *A, T *s_scratch)
 {
-    invertMatrix<T>(N, A, s_scratch);
+    inv<T>(N, A, s_scratch);
 }
 
 /**
- * @brief Scratch size in bytes for `invertMatrix` (augmented `[A | I]`).
+ * @brief Scratch size in bytes for `inv` (augmented `[A | I]`).
  *
  * The unpivoted Gauss-Jordan path saves the active pivot column + row window plus
  * one slot: `2*dimA + 1` elements of `T`. Allocate
- * `invertMatrix_scratch_bytes<T>(dimA)` for the `s_scratch` argument.
+ * `inv_scratch_bytes<T>(dimA)` for the `s_scratch` argument.
  *
  * @tparam T  Scalar type.
  * @param dimA  Matrix dimension (A is dimA x dimA).
- * @return Bytes to allocate for `invertMatrix`'s `s_scratch`.
+ * @return Bytes to allocate for `inv`'s `s_scratch`.
  */
 template <typename T>
-__host__ __device__ constexpr std::size_t invertMatrix_scratch_bytes(uint32_t dimA)
+__host__ __device__ constexpr std::size_t inv_scratch_bytes(uint32_t dimA)
 {
     return static_cast<std::size_t>(2 * dimA + 1) * sizeof(T);
 }
 
 /**
- * @brief Scratch size in bytes for `invertMatrix_pivoted`.
+ * @brief Scratch size in bytes for `inv_pivoted`.
  *
  * Row pivoting permutes the already-built inverse columns, so (unlike the
  * unpivoted path) the elimination cannot use the reduced active-column window —
@@ -96,10 +96,10 @@ __host__ __device__ constexpr std::size_t invertMatrix_scratch_bytes(uint32_t di
  *
  * @tparam T  Scalar type.
  * @param dimA  Matrix dimension (A is dimA x dimA).
- * @return Bytes to allocate for `invertMatrix_pivoted`'s `s_scratch`.
+ * @return Bytes to allocate for `inv_pivoted`'s `s_scratch`.
  */
 template <typename T>
-__host__ __device__ constexpr std::size_t invertMatrix_pivoted_scratch_bytes(uint32_t dimA)
+__host__ __device__ constexpr std::size_t inv_pivoted_scratch_bytes(uint32_t dimA)
 {
     return static_cast<std::size_t>(3 * dimA + 1) * sizeof(T);
 }
@@ -107,13 +107,13 @@ __host__ __device__ constexpr std::size_t invertMatrix_pivoted_scratch_bytes(uin
 /**
  * @brief In-place ROBUST (partial-pivoting) matrix inverse, augmented `[A | I]`.
  *
- * Partial-pivoting (row-pivoted) Gauss-Jordan sibling of `invertMatrix`. Same
+ * Partial-pivoting (row-pivoted) Gauss-Jordan sibling of `inv`. Same
  * augmented column-major `dimA x (2*dimA)` `[A | I]` input/output contract: on
  * return columns `dimA..2*dimA-1` hold `A^-1`. NumPy equivalent:
  * `Ainv = np.linalg.inv(A)`.
  *
  * @par Why pivoted
- * The plain `invertMatrix` divides by `A[pivRC + pivRC*dimA]` as-is, so it loses
+ * The plain `inv` divides by `A[pivRC + pivRC*dimA]` as-is, so it loses
  * accuracy (or fails outright) when a leading pivot is small/zero even though `A`
  * is invertible — e.g. a tiny `A[0,0]` beneath a large later row, or a row
  * permutation that parks a zero on the diagonal. At each step `k` this variant
@@ -137,7 +137,7 @@ __host__ __device__ constexpr std::size_t invertMatrix_pivoted_scratch_bytes(uin
  * are block-visible before they are consumed.
  *
  * @par Scratch
- * `s_scratch` must hold `invertMatrix_pivoted_scratch_bytes<T>(dimA)` = `3*dimA + 1`
+ * `s_scratch` must hold `inv_pivoted_scratch_bytes<T>(dimA)` = `3*dimA + 1`
  * elements of `T`: `dimA` for the pivot column, `2*dimA` for the full pivot row,
  * and one trailing slot to broadcast the chosen pivot-row index.
  *
@@ -148,7 +148,7 @@ __host__ __device__ constexpr std::size_t invertMatrix_pivoted_scratch_bytes(uin
  * @param s_scratch  Shared scratch of `(3*dimA + 1) * sizeof(T)` bytes.
  */
 template <typename T>
-__device__ void invertMatrix_pivoted(uint32_t dimA, T *A, T *s_scratch)
+__device__ void inv_pivoted(uint32_t dimA, T *A, T *s_scratch)
 {
     uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
     uint32_t size = blockDim.x * blockDim.y * blockDim.z;
@@ -210,21 +210,37 @@ __device__ void invertMatrix_pivoted(uint32_t dimA, T *A, T *s_scratch)
 /**
  * @brief Compile-time-size ROBUST (partial-pivoting) matrix inverse (`[A | I]`).
  *
- * Same as the runtime `invertMatrix_pivoted` but with the dimension as a template
+ * Same as the runtime `inv_pivoted` but with the dimension as a template
  * parameter; partial-pivoting Gauss-Jordan, tolerant of small leading pivots that
- * the plain `invertMatrix` mishandles. NumPy equivalent: `Ainv = np.linalg.inv(A)`.
+ * the plain `inv` mishandles. NumPy equivalent: `Ainv = np.linalg.inv(A)`.
  *
  * @tparam T  Scalar type.
  * @tparam N  Matrix dimension (A is N x N).
  * @param A       In/out augmented `[A | I]` buffer (column-major, N x 2*N);
  *                on return its right half holds `A^-1`.
  * @param s_scratch  Shared scratch of `(3*N + 1) * sizeof(T)` bytes
- *                (= `invertMatrix_pivoted_scratch_bytes<T>(N)`).
+ *                (= `inv_pivoted_scratch_bytes<T>(N)`).
  */
 template <typename T, uint32_t N>
-__device__ void invertMatrix_pivoted(T *A, T *s_scratch)
+__device__ void inv_pivoted(T *A, T *s_scratch)
 {
-    invertMatrix_pivoted<T>(N, A, s_scratch);
+    inv_pivoted<T>(N, A, s_scratch);
+}
+
+/**
+ * @brief Scratch size in bytes for the K-way fused `inv` (`Σ_m (2*dims[m]+1)` elements).
+ *
+ * @tparam T  Scalar type.
+ * @param K     Number of matrices.
+ * @param dims  Per-matrix dimensions.
+ * @return Bytes to allocate for the fused `inv`'s `s_scratch`.
+ */
+template <typename T>
+__host__ __device__ constexpr std::size_t inv_fused_scratch_bytes(uint32_t K, const uint32_t *dims)
+{
+    std::size_t elems = 0;
+    for (uint32_t m = 0; m < K; m++) { elems += 2u*dims[m] + 1u; }
+    return elems * sizeof(T);
 }
 
 /**
@@ -234,7 +250,7 @@ __device__ void invertMatrix_pivoted(T *A, T *s_scratch)
  * Gauss-Jordan sweeps over a single shared `MAX_DIM = max(dims)` pivot loop:
  * matrix `m` participates while `pivRC < dims[m]` and sits idle thereafter.
  * Every matrix keeps the same augmented `[V | I]` convention as the
- * single-matrix `invertMatrix` — buffer `mats[m]` is column-major
+ * single-matrix `inv` — buffer `mats[m]` is column-major
  * `dims[m] x (2*dims[m])` and on return its right half holds `inv(mats[m])`.
  * Fewer barriers than K separate calls (one save→update barrier pair per pivot
  * step, shared by all K matrices). Used by GATO's Schur kernel
@@ -255,10 +271,11 @@ __device__ void invertMatrix_pivoted(T *A, T *s_scratch)
  * @param MAX_DIM  `max(dims[0..K-1])` — the shared pivot-loop length (precondition).
  * @param mats     Array of K in/out augmented `[V | I]` buffers (column-major,
  *                 `dims[m] x 2*dims[m]`); on return each right half holds its inverse.
- * @param s_scratch   Shared scratch of `(Σ_m (2*dims[m]+1)) * sizeof(T)` bytes.
+ * @param s_scratch   Shared scratch of `inv_fused_scratch_bytes<T>(K, dims)` bytes
+ *                    (= `(Σ_m (2*dims[m]+1)) * sizeof(T)`).
  */
 template <typename T>
-__device__ void invertMatrix(uint32_t K, const uint32_t *dims, uint32_t MAX_DIM, T **mats, T *s_scratch)
+__device__ void inv(uint32_t K, const uint32_t *dims, uint32_t MAX_DIM, T **mats, T *s_scratch)
 {
     uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
     uint32_t size = blockDim.x * blockDim.y * blockDim.z;
@@ -304,9 +321,9 @@ __device__ void invertMatrix(uint32_t K, const uint32_t *dims, uint32_t MAX_DIM,
 /**
  * @brief Fused in-place inverse of TWO independent matrices (augmented `[V | I]`).
  *
- * Thin wrapper over the K-way `invertMatrix` (K=2). Inverts `A` (dimA x dimA) and
+ * Thin wrapper over the K-way `inv` (K=2). Inverts `A` (dimA x dimA) and
  * `B` (dimB x dimB) simultaneously in one block; same augmented `[V | I]`
- * convention and output as the single-matrix `invertMatrix`.
+ * convention and output as the single-matrix `inv`.
  * NumPy: `Ainv, Binv = inv(A), inv(B)`.
  *
  * @tparam T  Scalar type.
@@ -316,19 +333,19 @@ __device__ void invertMatrix(uint32_t K, const uint32_t *dims, uint32_t MAX_DIM,
  * @param s_scratch     Shared scratch of `(2*dimA + 2*dimB + 2) * sizeof(T)` bytes.
  */
 template <typename T>
-__device__ void invertMatrix(uint32_t dimA, uint32_t dimB, uint32_t MAX_DIM, T *A, T *B, T *s_scratch)
+__device__ void inv(uint32_t dimA, uint32_t dimB, uint32_t MAX_DIM, T *A, T *B, T *s_scratch)
 {
     uint32_t dims[2] = {dimA, dimB};
     T *mats[2] = {A, B};
-    invertMatrix<T>(2, dims, MAX_DIM, mats, s_scratch);
+    inv<T>(2, dims, MAX_DIM, mats, s_scratch);
 }
 
 /**
  * @brief Fused in-place inverse of THREE independent matrices (augmented `[V | I]`).
  *
- * Thin wrapper over the K-way `invertMatrix` (K=3). Inverts `A`,`B`,`C`
+ * Thin wrapper over the K-way `inv` (K=3). Inverts `A`,`B`,`C`
  * simultaneously in one block; same augmented `[V | I]` convention and output as
- * the single-matrix `invertMatrix`. Used by GATO's Schur kernel (Q_k, Q_kp1, R_k).
+ * the single-matrix `inv`. Used by GATO's Schur kernel (Q_k, Q_kp1, R_k).
  * NumPy: invert each independently.
  *
  * @tparam T  Scalar type.
@@ -338,26 +355,26 @@ __device__ void invertMatrix(uint32_t dimA, uint32_t dimB, uint32_t MAX_DIM, T *
  * @param s_scratch          Shared scratch of `(2*dimA + 2*dimB + 2*dimC + 3) * sizeof(T)` bytes.
  */
 template <typename T>
-__device__ void invertMatrix(uint32_t dimA, uint32_t dimB, uint32_t dimC, uint32_t MAX_DIM, T *A, T *B, T *C, T *s_scratch)
+__device__ void inv(uint32_t dimA, uint32_t dimB, uint32_t dimC, uint32_t MAX_DIM, T *A, T *B, T *C, T *s_scratch)
 {
     uint32_t dims[3] = {dimA, dimB, dimC};
     T *mats[3] = {A, B, C};
-    invertMatrix<T>(3, dims, MAX_DIM, mats, s_scratch);
+    inv<T>(3, dims, MAX_DIM, mats, s_scratch);
 }
 
 
 /**
- * @brief Scratch size in bytes for `invertMatrix_dense`.
+ * @brief Scratch size in bytes for `inv_dense`.
  *
  * The dual-buffer dense path saves one `3*dimA`-element pivot working set. Allocate
- * `invertMatrix_dense_scratch_bytes<T>(dimA)` for the `s_scratch` argument.
+ * `inv_dense_scratch_bytes<T>(dimA)` for the `s_scratch` argument.
  *
  * @tparam T  Scalar type.
  * @param dimA  Matrix dimension (A is dimA x dimA).
- * @return Bytes to allocate for `invertMatrix_dense`'s `s_scratch`.
+ * @return Bytes to allocate for `inv_dense`'s `s_scratch`.
  */
 template <typename T>
-__host__ __device__ constexpr std::size_t invertMatrix_dense_scratch_bytes(uint32_t dimA)
+__host__ __device__ constexpr std::size_t inv_dense_scratch_bytes(uint32_t dimA)
 {
     return static_cast<std::size_t>(3 * dimA) * sizeof(T);
 }
@@ -392,7 +409,7 @@ __host__ __device__ constexpr std::size_t invertMatrix_dense_scratch_bytes(uint3
  * @param s_scratch  Shared scratch of `3 * dimA * sizeof(T)` bytes.
  */
 template <typename T>
-__device__ void invertMatrix_dense(uint32_t dimA, T *A, T *Ainv, T *s_scratch)
+__device__ void inv_dense(uint32_t dimA, T *A, T *Ainv, T *s_scratch)
 {
     uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
     uint32_t size = blockDim.x * blockDim.y * blockDim.z;
@@ -433,7 +450,7 @@ __device__ void invertMatrix_dense(uint32_t dimA, T *A, T *Ainv, T *s_scratch)
 /**
  * @brief Compile-time-size dense in-place matrix inverse (dual-update Gauss-Jordan).
  *
- * Same as the runtime `invertMatrix_dense` but with the dimension as a template
+ * Same as the runtime `inv_dense` but with the dimension as a template
  * parameter; on return both `A` and `Ainv` hold `A^{-1}`. NumPy equivalent:
  * `Ainv = np.linalg.inv(A)`.
  *
@@ -444,7 +461,7 @@ __device__ void invertMatrix_dense(uint32_t dimA, T *A, T *Ainv, T *s_scratch)
  * @param s_scratch  Shared scratch of `3 * N * sizeof(T)` bytes.
  */
 template <typename T, uint32_t N>
-__device__ void invertMatrix_dense(T *A, T *Ainv, T *s_scratch)
+__device__ void inv_dense(T *A, T *Ainv, T *s_scratch)
 {
-    invertMatrix_dense<T>(N, A, Ainv, s_scratch);
+    inv_dense<T>(N, A, Ainv, s_scratch);
 }

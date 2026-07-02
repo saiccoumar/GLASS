@@ -27,7 +27,7 @@ rendered signatures appear on the :doc:`l1`, :doc:`l2`, and :doc:`l3` pages.
 
 * ``glass::warp::gemm`` — compile-time-size GEMM across one warp (e.g. 4×4
   homogeneous-transform multiplies).
-* ``glass::warp::cholDecomp_InPlace`` — small SPD Cholesky factor.
+* ``glass::warp::potrf`` — small SPD Cholesky factor.
 * ``glass::warp::trsv`` — flagged triangular solve (``LOWER`` / ``UNIT`` /
   ``TRANSPOSE``), subsuming the lower ``glass::warp::trsm`` /
   ``glass::warp::trsm_transpose``.

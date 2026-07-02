@@ -115,17 +115,17 @@ __device__ void set_const(uint32_t n, T alpha, T *x,
                            cgrps::thread_group g = cgrps::this_thread_block())
 { set_const_impl<GroupBarrier, T, TRAILING_SYNC>(GroupBarrier{g}, n, alpha, x); }
 
-/** @brief Load the identity `A = I_n` (cgrps variant; see glass::loadIdentity). */
+/** @brief Load the identity `A = I_n` (cgrps variant; see glass::set_identity). */
 template <typename T, bool TRAILING_SYNC = true>
-__device__ void loadIdentity(uint32_t n, T *A,
+__device__ void set_identity(uint32_t n, T *A,
                               cgrps::thread_group g = cgrps::this_thread_block())
-{ loadIdentity_impl<GroupBarrier, T, TRAILING_SYNC>(GroupBarrier{g}, n, A); }
+{ set_identity_impl<GroupBarrier, T, TRAILING_SYNC>(GroupBarrier{g}, n, A); }
 
-/** @brief Add a scaled identity `A += alpha*I` (cgrps variant; see glass::addI). */
+/** @brief Add a scaled identity `A += alpha*I` (cgrps variant; see glass::add_identity). */
 template <typename T, bool TRAILING_SYNC = true>
-__device__ void addI(uint32_t n, T *A, T alpha,
+__device__ void add_identity(uint32_t n, T *A, T alpha,
                      cgrps::thread_group g = cgrps::this_thread_block())
-{ addI_impl<GroupBarrier, T, TRAILING_SYNC>(GroupBarrier{g}, n, A, alpha); }
+{ add_identity_impl<GroupBarrier, T, TRAILING_SYNC>(GroupBarrier{g}, n, A, alpha); }
 
 // ── reductions ────────────────────────────────────────────────────────────────
 /** @brief Sum reduction `x[0] = sum(x)` (cgrps variant; see glass::reduce). */

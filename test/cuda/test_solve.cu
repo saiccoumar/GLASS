@@ -77,7 +77,7 @@ int main(int argc, char** argv) {
         int* dFail; cudaMalloc(&dFail, sizeof(int));
         bool ok = false;
         #define DR(XX,UU) if(!ok && NX==XX && NU==UU){ \
-            int sm = glass::riccati_smem_count<XX,UU>()*sizeof(float); \
+            int sm = glass::riccati_scratch_bytes<float,XX,UU>(); \
             if(warp){ if(reg) k_riccati_warp<XX,UU,true><<<1,32,sm>>>(dP,dA,dB,dR,dK,rho,dFail); \
                       else    k_riccati_warp<XX,UU,false><<<1,32,sm>>>(dP,dA,dB,dR,dK,rho,dFail); } \
             else    { if(reg) k_riccati<XX,UU,true><<<1,th,sm>>>(dP,dA,dB,dR,dK,rho,dFail); \

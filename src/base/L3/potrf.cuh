@@ -28,7 +28,7 @@
 // two per-row syncs, so the glass:: and cgrps:: surfaces share this one body.
 // (No separable TRAILING_SYNC: the algorithm's final step is itself a barrier.)
 template <typename Bar, typename T, bool CHECK = false>
-__device__ void cholDecomp_InPlace_impl(Bar bar, uint32_t n, T *s_A, int *s_fail)
+__device__ void potrf_impl(Bar bar, uint32_t n, T *s_A, int *s_fail)
 {
     uint32_t rank = bar.rank(), size = bar.size();
     if constexpr (CHECK) { if (rank == 0 && s_fail) *s_fail = 0; }   // only rank 0 writes s_fail
@@ -52,9 +52,9 @@ __device__ void cholDecomp_InPlace_impl(Bar bar, uint32_t n, T *s_A, int *s_fail
 }
 
 template <typename T, bool CHECK = false>
-__device__ void cholDecomp_InPlace(uint32_t n, T *s_A, int *s_fail = nullptr)
+__device__ void potrf(uint32_t n, T *s_A, int *s_fail = nullptr)
 {
-    cholDecomp_InPlace_impl<BlockBarrier, T, CHECK>(BlockBarrier{}, n, s_A, s_fail);
+    potrf_impl<BlockBarrier, T, CHECK>(BlockBarrier{}, n, s_A, s_fail);
 }
 
 /**
@@ -64,7 +64,7 @@ __device__ void cholDecomp_InPlace(uint32_t n, T *s_A, int *s_fail = nullptr)
  * column sweeps over a single shared `MAX_DIM = max(dims)` row loop: matrix `m`
  * participates while `row < dims[m]` and sits idle thereafter. Each matrix keeps
  * the same column-major in-place `A = L*L^T` convention as the single-matrix
- * `cholDecomp_InPlace` — on return the lower triangle of `mats[m]` holds its
+ * `potrf` — on return the lower triangle of `mats[m]` holds its
  * factor `L` (the upper triangle keeps its input values). Same two-barriers-per
  * step structure as the single-matrix path; no shared scratch required.
  *
@@ -82,7 +82,7 @@ __device__ void cholDecomp_InPlace(uint32_t n, T *s_A, int *s_fail = nullptr)
  *                 on return each lower triangle holds its Cholesky factor `L`.
  */
 template <typename T>
-__device__ void cholDecomp_InPlace(uint32_t K, const uint32_t *dims, uint32_t MAX_DIM, T **mats)
+__device__ void potrf(uint32_t K, const uint32_t *dims, uint32_t MAX_DIM, T **mats)
 {
     uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
     uint32_t size = blockDim.x * blockDim.y * blockDim.z;
@@ -118,7 +118,7 @@ __device__ void cholDecomp_InPlace(uint32_t K, const uint32_t *dims, uint32_t MA
 /**
  * @brief Fused in-place Cholesky factorization of TWO SPD matrices (lower).
  *
- * Thin wrapper over the K-way `cholDecomp_InPlace` (K=2). Same column-major
+ * Thin wrapper over the K-way `potrf` (K=2). Same column-major
  * in-place `A = L*L^T` convention and output as the single-matrix path.
  * NumPy: `La, Lb = cholesky(A), cholesky(B)` (lower).
  *
@@ -128,17 +128,17 @@ __device__ void cholDecomp_InPlace(uint32_t K, const uint32_t *dims, uint32_t MA
  * @param A,B        In/out column-major SPD buffers (dim x dim); lower triangles hold L.
  */
 template <typename T>
-__device__ void cholDecomp_InPlace(uint32_t dimA, uint32_t dimB, uint32_t MAX_DIM, T *A, T *B)
+__device__ void potrf(uint32_t dimA, uint32_t dimB, uint32_t MAX_DIM, T *A, T *B)
 {
     uint32_t dims[2] = {dimA, dimB};
     T *mats[2] = {A, B};
-    cholDecomp_InPlace<T>(2, dims, MAX_DIM, mats);
+    potrf<T>(2, dims, MAX_DIM, mats);
 }
 
 /**
  * @brief Fused in-place Cholesky factorization of THREE SPD matrices (lower).
  *
- * Thin wrapper over the K-way `cholDecomp_InPlace` (K=3). Same column-major
+ * Thin wrapper over the K-way `potrf` (K=3). Same column-major
  * in-place `A = L*L^T` convention and output as the single-matrix path.
  * NumPy: invert-free factor each independently (lower).
  *
@@ -148,11 +148,11 @@ __device__ void cholDecomp_InPlace(uint32_t dimA, uint32_t dimB, uint32_t MAX_DI
  * @param A,B,C           In/out column-major SPD buffers (dim x dim); lower triangles hold L.
  */
 template <typename T>
-__device__ void cholDecomp_InPlace(uint32_t dimA, uint32_t dimB, uint32_t dimC, uint32_t MAX_DIM, T *A, T *B, T *C)
+__device__ void potrf(uint32_t dimA, uint32_t dimB, uint32_t dimC, uint32_t MAX_DIM, T *A, T *B, T *C)
 {
     uint32_t dims[3] = {dimA, dimB, dimC};
     T *mats[3] = {A, B, C};
-    cholDecomp_InPlace<T>(3, dims, MAX_DIM, mats);
+    potrf<T>(3, dims, MAX_DIM, mats);
 }
 
 /**
@@ -174,9 +174,9 @@ __device__ void cholDecomp_InPlace(uint32_t dimA, uint32_t dimB, uint32_t dimC, 
  * @param s_fail  Optional flag (CHECK only): set to 1 on a non-PD / NaN pivot, else 0. Ignored when null.
  */
 template <typename T, uint32_t N, bool CHECK = false>
-__device__ void cholDecomp_InPlace(T *s_A, int *s_fail = nullptr)
+__device__ void potrf(T *s_A, int *s_fail = nullptr)
 {
-    cholDecomp_InPlace<T, CHECK>(N, s_A, s_fail);
+    potrf<T, CHECK>(N, s_A, s_fail);
 }
 
 namespace warp {
@@ -203,7 +203,7 @@ namespace warp {
      * @param s_fail  Optional flag (CHECK only): set to 1 on a non-PD / NaN pivot, else 0. Ignored when null.
      */
     template <typename T, uint32_t N, bool CHECK = false>
-    __device__ void cholDecomp_InPlace(T *s_A, int *s_fail = nullptr)
+    __device__ void potrf(T *s_A, int *s_fail = nullptr)
     {
         uint32_t lane = (threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y) & 31;
         if constexpr (CHECK) { if (lane == 0 && s_fail) *s_fail = 0; }

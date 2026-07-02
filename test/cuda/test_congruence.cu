@@ -55,7 +55,7 @@ __global__ void k_cacc(float alpha, const float* G, const float* M, float beta, 
 
 template <uint32_t P, uint32_t Q>
 static void launch_cacc(int surf, int th, bool acc, float al, const float* dG, const float* dM, float be, float* dC) {
-    int sm = glass::congruence_accum_smem_count<float,P,Q>() * sizeof(float);
+    int sm = glass::congruence_accum_scratch_bytes<float,P,Q>();
     if (acc) {
         if (surf==SURF_WARP) k_cacc<SURF_WARP,P,Q,true><<<1,th,sm>>>(al,dG,dM,be,dC);
         else                 k_cacc<SURF_BLOCK,P,Q,true><<<1,th,sm>>>(al,dG,dM,be,dC);

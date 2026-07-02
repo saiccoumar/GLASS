@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <cstddef>
 
 // ─── Riccati feedback gain  K = (R + BᵀPB)⁻¹ (BᵀPA) ──────────────────────────
 //
@@ -9,18 +10,19 @@
 // block, column-major. Requires congruence.cuh + posv.cuh (included first).
 
 /**
- * @brief Shared-memory floats needed by `riccati_gain` `s_scratch`.
+ * @brief Scratch size in bytes for `riccati_gain` `s_scratch`.
  *
  * Holds the NU×NU control-Hessian `S = R + BᵀPB` plus the larger of the two
  * congruence/bilinear products (`P·B` is NX×NU, `P·A` is NX×NX).
  *
+ * @tparam T   Element type.
  * @tparam NX  State dimension.
  * @tparam NU  Control dimension.
- * @return Number of `T` elements for `s_scratch`.
+ * @return Bytes to allocate for `riccati_gain`'s `s_scratch`.
  */
-template <uint32_t NX, uint32_t NU>
-__host__ __device__ constexpr uint32_t riccati_smem_count() {
-    return NU*NU + NX * (NX >= NU ? NX : NU);
+template <typename T, uint32_t NX, uint32_t NU>
+__host__ __device__ constexpr std::size_t riccati_scratch_bytes() {
+    return (NU*NU + NX * (NX >= NU ? NX : NU)) * sizeof(T);
 }
 
 /**
@@ -43,7 +45,7 @@ __host__ __device__ constexpr uint32_t riccati_smem_count() {
  * @param B  Control Jacobian (NX×NU, column-major).
  * @param R  Control cost (NU×NU, SPD, column-major).
  * @param Kgain  Out gain `K` (NU×NX, column-major).
- * @param s_scratch  Shared scratch of `riccati_smem_count<NX,NU>()` elements.
+ * @param s_scratch  Shared scratch of `riccati_scratch_bytes<NX,NU>()` elements.
  * @param rho     Diagonal shift on `S` when REGULARIZE (ignored otherwise).
  * @param s_fail  Optional flag: set to 1 if `S` (after the shift) is not PD, else 0.
  */
@@ -88,7 +90,7 @@ namespace warp {
      * @tparam TRAILING_SYNC  Emit a trailing `__syncwarp()` (default true).
      * @param P,A,B,R  Inputs (column-major; see the block overload).
      * @param Kgain  Out gain `K` (NU×NX, column-major).
-     * @param s_scratch Shared scratch of `riccati_smem_count<NX,NU>()` elements (per warp).
+     * @param s_scratch Shared scratch of `riccati_scratch_bytes<NX,NU>()` elements (per warp).
      * @param rho    Diagonal shift on `S` when REGULARIZE (ignored otherwise).
      * @param s_fail Optional flag: set to 1 if `S` (after the shift) is not PD, else 0.
      */

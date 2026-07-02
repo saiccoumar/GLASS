@@ -1,4 +1,4 @@
-// test_factor_check.cu — exercise the CHECK flag on glass::cholDecomp_InPlace
+// test_factor_check.cu — exercise the CHECK flag on glass::potrf
 // (block / warp / cgrps) and glass::ldlt (block, + inertia). Prints a scalar
 // line then the factored matrix.
 //
@@ -18,7 +18,7 @@ __global__ void k_cholchk_block(int n, float* A, int* fail) {
     extern __shared__ float s[];
     for (int i = threadIdx.x; i < n*n; i += blockDim.x) s[i] = A[i];
     __syncthreads();
-    glass::cholDecomp_InPlace<float, true>((uint32_t)n, s, fail);
+    glass::potrf<float, true>((uint32_t)n, s, fail);
     __syncthreads();
     for (int i = threadIdx.x; i < n*n; i += blockDim.x) A[i] = s[i];
 }
@@ -28,7 +28,7 @@ __global__ void k_cholchk_cgrps(int n, float* A, int* fail) {
     auto g = cooperative_groups::this_thread_block();
     for (int i = threadIdx.x; i < n*n; i += blockDim.x) s[i] = A[i];
     __syncthreads();
-    glass::cgrps::cholDecomp_InPlace<float, true>((uint32_t)n, s, g, fail);
+    glass::cgrps::potrf<float, true>((uint32_t)n, s, g, fail);
     __syncthreads();
     for (int i = threadIdx.x; i < n*n; i += blockDim.x) A[i] = s[i];
 }
@@ -38,7 +38,7 @@ __global__ void k_cholchk_warp(float* A, int* fail) {
     extern __shared__ float s[];
     for (uint32_t i = threadIdx.x; i < N*N; i += blockDim.x) s[i] = A[i];
     __syncthreads();
-    glass::warp::cholDecomp_InPlace<float, N, true>(s, fail);   // launched with 32 threads
+    glass::warp::potrf<float, N, true>(s, fail);   // launched with 32 threads
     __syncthreads();
     for (uint32_t i = threadIdx.x; i < N*N; i += blockDim.x) A[i] = s[i];
 }

@@ -179,7 +179,7 @@ def _hash_sources(cu_path: pathlib.Path) -> str:
               GLASS_DIR / "src" / "base" / "L3" / "syrk.cuh",
               GLASS_DIR / "test" / "cuda" / "test_syrk.cu",
               GLASS_DIR / "test" / "cuda" / "test_fused.cu",
-              GLASS_DIR / "src" / "base" / "L3" / "chol_InPlace.cuh",
+              GLASS_DIR / "src" / "base" / "L3" / "potrf.cuh",
               GLASS_DIR / "test" / "cuda" / "test_factor_check.cu",
               GLASS_DIR / "src" / "base" / "L3" / "inv.cuh",
               GLASS_DIR / "src" / "base" / "L3" / "trsm.cuh",

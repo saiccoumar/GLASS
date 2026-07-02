@@ -31,7 +31,7 @@ your problems are laid out in memory and how many threads you can give each one.
        index array; blocks stride over the batch. Use for gather-style batches
        where problem *i*'s pointers are not a fixed stride apart.
    * - **K-way fused, interleaved in one block**
-     - ``invertMatrix`` / ``cholDecomp_InPlace`` (K-way overloads; ``inv2`` /
+     - ``inv`` / ``potrf`` (K-way overloads; ``inv2`` /
        ``inv3`` wrappers)
      - A *single* block factors/inverts K independent matrices at once by
        interleaving their sweeps over one shared row loop. Use when K is small
@@ -43,7 +43,7 @@ your problems are laid out in memory and how many threads you can give each one.
        of tiny GEMMs; threads are partitioned into per-problem groups. Use inside
        an existing 1D-block kernel that can't relaunch.
    * - **Warp-per-problem**
-     - ``glass::warp::`` ops (``dot`` / ``gemv`` / ``trsv`` / ``cholDecomp_InPlace``
+     - ``glass::warp::`` ops (``dot`` / ``gemv`` / ``trsv`` / ``potrf``
        / ``posv`` / …)
      - One 32-lane warp owns one problem; pack many warps into a block to run
        many problems concurrently (``threadIdx.y`` selects the warp). Use for the

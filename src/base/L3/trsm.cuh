@@ -1,7 +1,7 @@
 #pragma once
 #include "../barrier.cuh"
 #include <cstdint>
-#include "chol_InPlace.cuh"  // warp::cholDecomp_InPlace, composed by warp::posv
+#include "potrf.cuh"  // warp::potrf, composed by warp::posv
 
 /**
  * @brief Lower-triangular solve `L x = b` in place via forward substitution (TRSM/TRSV).
@@ -77,7 +77,7 @@ namespace warp {
             T factor = static_cast<T>(0);
             if (lane == 0) { factor = b[col] / L[col*N + col]; b[col] = factor; }
             // broadcast from lane 0's register (not a shared re-read of b[col]) — see the note
-            // in warp::cholDecomp_InPlace; immune to the nvcc __restrict__ stale-cache miscompile.
+            // in warp::potrf; immune to the nvcc __restrict__ stale-cache miscompile.
             factor = __shfl_sync(0xffffffffu, factor, 0);
             for (uint32_t row = lane + col + 1; row < N; row += 32)
                 b[row] -= L[col*N + row] * factor;
@@ -90,7 +90,7 @@ namespace warp {
      *
      * One 32-lane warp solves `Lᵀ x = b` in place given a lower-triangular `L`
      * (column-major), overwriting `b`. Together with `warp::trsm` this solves an SPD
-     * system `A x = b` from `A = L Lᵀ`: factor with `warp::cholDecomp_InPlace`, then
+     * system `A x = b` from `A = L Lᵀ`: factor with `warp::potrf`, then
      * `warp::trsm` (forward) then `warp::trsm_transpose` (back). No `__syncthreads`.
      * SciPy: `x = scipy.linalg.solve_triangular(L.T, b, lower=False)`.
      *
@@ -107,7 +107,7 @@ namespace warp {
             T factor = static_cast<T>(0);
             if (lane == 0) { factor = b[col] / L[col*N + col]; b[col] = factor; }
             // broadcast from lane 0's register (not a shared re-read of b[col]); immune to the
-            // nvcc __restrict__ stale-cache miscompile — see warp::cholDecomp_InPlace.
+            // nvcc __restrict__ stale-cache miscompile — see warp::potrf.
             factor = __shfl_sync(0xffffffffu, factor, 0);
             // eliminate x[col] from rows i < col:  b[i] -= (Lᵀ)_{i,col} x[col] = L_{col,i} x[col]
             for (uint32_t i = lane; i < (uint32_t)col; i += 32)
@@ -123,7 +123,7 @@ namespace warp {
     // warp and block can't share an impl (`__shfl`/`__syncwarp` vs `__syncthreads`).
     // Every pivot is broadcast from lane 0's REGISTER via `__shfl_sync` (never a
     // shared re-read of b[col]), immune to the nvcc __restrict__ stale-cache
-    // miscompile (see warp::cholDecomp_InPlace). The `UNIT` flag skips the diagonal
+    // miscompile (see warp::potrf). The `UNIT` flag skips the diagonal
     // divide (implicit unit diagonal).
 
     /**
@@ -289,7 +289,7 @@ namespace warp {
      * @brief Single-warp SPD solve `A x = b` via Cholesky (LAPACK posv), compile-time size.
      *
      * One 32-lane warp solves the symmetric-positive-definite system `A x = b` in
-     * place: it factors `A = L Lᵀ` with `warp::cholDecomp_InPlace` (lower triangle
+     * place: it factors `A = L Lᵀ` with `warp::potrf` (lower triangle
      * overwrites `A`), then a forward solve `L y = b` (`trsv<…,LOWER,!TRANSPOSE>`) and a
      * back solve `Lᵀ x = y` (`trsv<…,LOWER,TRANSPOSE>`). On return `b` holds `x` and the
      * lower triangle of `A` holds `L`. This is the composed warp-per-problem solve —
@@ -306,7 +306,7 @@ namespace warp {
     template <typename T, uint32_t N>
     __device__ void posv(T *A, T *b)
     {
-        cholDecomp_InPlace<T, N>(A);
+        potrf<T, N>(A);
         trsv<T, N, /*LOWER=*/true, /*UNIT=*/false, /*TRANSPOSE=*/false>(A, b);  // forward: L y = b
         trsv<T, N, /*LOWER=*/true, /*UNIT=*/false, /*TRANSPOSE=*/true>(A, b);   // back:   Lᵀ x = y
     }
@@ -334,7 +334,7 @@ namespace warp {
      *
      * Warp-per-problem parity with the block multi-RHS `glass::posv`: one 32-lane
      * warp optionally shifts `A`'s diagonal (`REGULARIZE`: `rho·I`, or `rho·diag(A)`
-     * when `REG_DIAG`), factors `A = L Lᵀ` via `warp::cholDecomp_InPlace<…,CHECK>`
+     * when `REG_DIAG`), factors `A = L Lᵀ` via `warp::potrf<…,CHECK>`
      * (reporting a non-PD pivot through `s_fail`), then forward/back-solves each of
      * the `NRHS` columns of `B` (column-major, column `c` at `B + c*N`). On return
      * `A` holds `L` and `B` holds `X`. No shared scratch, no `__syncthreads`.
@@ -361,7 +361,7 @@ namespace warp {
     __device__ void posv(T *A, T *B, T rho = T(0), int *s_fail = nullptr)
     {
         if constexpr (REGULARIZE) _posv_regularize<T, REG_DIAG>(N, A, rho);  // rho*I or rho*diag(A)
-        cholDecomp_InPlace<T, N, CHECK>(A, s_fail);
+        potrf<T, N, CHECK>(A, s_fail);
         for (uint32_t c = 0; c < NRHS; c++) {
             T *Bc = B + c * N;                                              // column c (column-major)
             trsv<T, N, /*LOWER=*/true, /*UNIT=*/false, /*TRANSPOSE=*/false>(A, Bc);  // forward: L y = b

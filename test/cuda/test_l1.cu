@@ -111,11 +111,11 @@ __global__ void k_set_const_simple(int n, float alpha, float* x) {
     glass::set_const(n, alpha, x);
 }
 
-__global__ void k_loadIdentity_cg(int n, float* A) { glass::cgrps::loadIdentity(n, A); }
-__global__ void k_loadIdentity_simple(int n, float* A) { glass::loadIdentity(n, A); }
+__global__ void k_loadIdentity_cg(int n, float* A) { glass::cgrps::set_identity(n, A); }
+__global__ void k_loadIdentity_simple(int n, float* A) { glass::set_identity(n, A); }
 
-__global__ void k_addI_cg(int n, float alpha, float* A) { glass::cgrps::addI(n, A, alpha); }
-__global__ void k_addI_simple(int n, float alpha, float* A) { glass::addI(n, A, alpha); }
+__global__ void k_addI_cg(int n, float alpha, float* A) { glass::cgrps::add_identity(n, A, alpha); }
+__global__ void k_addI_simple(int n, float alpha, float* A) { glass::add_identity(n, A, alpha); }
 
 __global__ void k_transpose_cg(int N, int M, float* a, float* b) {
     glass::cgrps::transpose(N, M, a, b);
@@ -392,14 +392,14 @@ int main(int argc, char** argv) {
         cudaDeviceSynchronize();
         print_device_vec(dx, n);
 
-    } else if (strcmp(op, "loadIdentity") == 0) {
+    } else if (strcmp(op, "set_identity") == 0) {
         float* dA = alloc_device_vec(n * n);
         if (is_cg(ver))  k_loadIdentity_cg<<<1, THREADS>>>(n, dA);
         else             k_loadIdentity_simple<<<1, THREADS>>>(n, dA);
         cudaDeviceSynchronize();
         print_device_vec(dA, n * n);
 
-    } else if (strcmp(op, "addI") == 0) {
+    } else if (strcmp(op, "add_identity") == 0) {
         float alpha = atof(argv[4]);
         float* dA = read_device_vec(argv[5], n * n);
         if (is_cg(ver))  k_addI_cg<<<1, THREADS>>>(n, alpha, dA);

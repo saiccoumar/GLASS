@@ -30,8 +30,8 @@ template<typename T,int N,bool WARP> __global__ void k_gemm(T* A, T* B, T* C) {
     else                glass::gemm<T,N,N,N>((T)1, A, B, (T)0, C);
 }
 template<typename T,int N,bool WARP> __global__ void k_chol(T* A) {
-    if constexpr (WARP) glass::warp::cholDecomp_InPlace<T,N>(A);   // A -> L (lower)
-    else                glass::cholDecomp_InPlace<T,N>(A);
+    if constexpr (WARP) glass::warp::potrf<T,N>(A);   // A -> L (lower)
+    else                glass::potrf<T,N>(A);
 }
 template<typename T,int N,bool WARP> __global__ void k_trsv(T* L, T* x) {
     if constexpr (WARP) glass::warp::trsv<T,N>(L, x);             // solve L x = b in place

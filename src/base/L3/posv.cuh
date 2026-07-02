@@ -5,8 +5,8 @@
  * @file posv.cuh
  * @brief SPD linear solve via Cholesky + two triangular solves (pure SIMT).
  *
- * `posv` / `potrs` are thin single-block compositions of `cholDecomp_InPlace`
- * (`chol_InPlace.cuh`) and `trsv` (`trsv.cuh`). Both callees end with a trailing
+ * `posv` / `potrs` are thin single-block compositions of `potrf`
+ * (`potrf.cuh`) and `trsv` (`trsv.cuh`). Both callees end with a trailing
  * `__syncthreads()`, so the factor and the two solves compose with NO inter-call
  * barrier. Pure-SIMT companion to `glass::nvidia::posv`. Column-major throughout.
  */
@@ -56,7 +56,7 @@ __device__ void _posv_regularize(uint32_t n, T *A, T rho)
 template <typename T>
 __device__ void posv(uint32_t n, T *A, T *b)
 {
-    cholDecomp_InPlace<T>(n, A);            // A -> L (lower); trailing __syncthreads
+    potrf<T>(n, A);            // A -> L (lower); trailing __syncthreads
     trsv<T, true, false, false>(n, A, b);  // forward: L y = b
     trsv<T, true, false, true>(n, A, b);   // back:    Lᵀ x = y
 }
@@ -80,7 +80,7 @@ __device__ void posv(T *A, T *b) { posv<T>(N, A, b); }
 /**
  * @brief Solve the SPD system `A x = b` from a precomputed Cholesky factor (LAPACK potrs).
  *
- * Given the lower factor `L` (e.g. from `cholDecomp_InPlace`), solves
+ * Given the lower factor `L` (e.g. from `potrf`), solves
  * `L Lᵀ x = b` by forward then back substitution — the reusable-factor /
  * multi-solve path (no re-factor). `L` is read-only; `b` is overwritten with `x`.
  * Thread-count invariant. SciPy equivalent: `x = scipy.linalg.cho_solve((L, True), b)`.
@@ -150,7 +150,7 @@ template <typename T, bool REGULARIZE = false, bool CHECK = false, bool REG_DIAG
 __device__ void posv(uint32_t n, uint32_t nrhs, T *A, T *B, T rho = T(0), int *s_fail = nullptr)
 {
     if constexpr (REGULARIZE) _posv_regularize<T, REG_DIAG>(n, A, rho);  // rho*I or rho*diag(A)
-    cholDecomp_InPlace<T, CHECK>(n, A, s_fail);   // A -> L (lower); trailing __syncthreads
+    potrf<T, CHECK>(n, A, s_fail);   // A -> L (lower); trailing __syncthreads
     for (uint32_t c = 0; c < nrhs; c++) {
         T *Bc = B + c * n;                        // column c (column-major)
         trsv<T, true, false, false>(n, A, Bc);    // forward: L y = b
@@ -193,7 +193,7 @@ __device__ void posv(T *A, T *B, T rho = T(0), int *s_fail = nullptr)
 /**
  * @brief Multi-RHS SPD solve `A X = B` from a precomputed Cholesky factor (LAPACK potrs).
  *
- * Given the lower factor `L` (e.g. from `cholDecomp_InPlace`), solves
+ * Given the lower factor `L` (e.g. from `potrf`), solves
  * `L Lᵀ X = B` for each of the `nrhs` columns by forward then back substitution
  * — the reusable-factor / multi-solve path (no re-factor). `L` is read-only; `B`
  * is overwritten with `X`.

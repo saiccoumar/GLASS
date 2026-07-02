@@ -4,7 +4,7 @@
 
 // shared body: write the n×n identity (column-major)
 template <typename Bar, typename T, bool TRAILING_SYNC = true>
-__device__ void loadIdentity_impl(Bar bar, uint32_t n, T *A)
+__device__ void set_identity_impl(Bar bar, uint32_t n, T *A)
 {
     uint32_t rank = bar.rank(), size = bar.size();
     for (uint32_t i = rank; i < n*n; i += size) {
@@ -25,14 +25,14 @@ __device__ void loadIdentity_impl(Bar bar, uint32_t n, T *A)
  * @param A  Output matrix of `n*n` elements (column-major).
  */
 template <typename T, bool TRAILING_SYNC = true>
-__device__ void loadIdentity(uint32_t n, T *A)
+__device__ void set_identity(uint32_t n, T *A)
 {
-    loadIdentity_impl<BlockBarrier, T, TRAILING_SYNC>(BlockBarrier{}, n, A);
+    set_identity_impl<BlockBarrier, T, TRAILING_SYNC>(BlockBarrier{}, n, A);
 }
 
 // shared body: add a scaled identity to the diagonal `A += alpha*I`
 template <typename Bar, typename T, bool TRAILING_SYNC = true>
-__device__ void addI_impl(Bar bar, uint32_t n, T *A, T alpha)
+__device__ void add_identity_impl(Bar bar, uint32_t n, T *A, T alpha)
 {
     uint32_t rank = bar.rank(), size = bar.size();
     for (uint32_t i = rank; i < n*n; i += size)
@@ -52,9 +52,9 @@ __device__ void addI_impl(Bar bar, uint32_t n, T *A, T alpha)
  * @param alpha  Scalar added to each diagonal entry.
  */
 template <typename T, bool TRAILING_SYNC = true>
-__device__ void addI(uint32_t n, T *A, T alpha)
+__device__ void add_identity(uint32_t n, T *A, T alpha)
 {
-    addI_impl<BlockBarrier, T, TRAILING_SYNC>(BlockBarrier{}, n, A, alpha);
+    add_identity_impl<BlockBarrier, T, TRAILING_SYNC>(BlockBarrier{}, n, A, alpha);
 }
 
 /**
@@ -67,9 +67,9 @@ __device__ void addI(uint32_t n, T *A, T alpha)
  * @param A  Output matrix of `N*N` elements (column-major).
  */
 template <typename T, uint32_t N, bool TRAILING_SYNC = true>
-__device__ void loadIdentity(T *A)
+__device__ void set_identity(T *A)
 {
-    loadIdentity_impl<BlockBarrier, T, TRAILING_SYNC>(BlockBarrier{}, N, A);
+    set_identity_impl<BlockBarrier, T, TRAILING_SYNC>(BlockBarrier{}, N, A);
 }
 
 /**
@@ -83,14 +83,14 @@ __device__ void loadIdentity(T *A)
  * @param alpha  Scalar added to each diagonal entry.
  */
 template <typename T, uint32_t N, bool TRAILING_SYNC = true>
-__device__ void addI(T *A, T alpha)
+__device__ void add_identity(T *A, T alpha)
 {
-    addI_impl<BlockBarrier, T, TRAILING_SYNC>(BlockBarrier{}, N, A, alpha);
+    add_identity_impl<BlockBarrier, T, TRAILING_SYNC>(BlockBarrier{}, N, A, alpha);
 }
 
 // shared body: add a scaled identity to the leading diagonal block
 template <typename Bar, typename T, bool TRAILING_SYNC = true>
-__device__ void addI_partial_impl(Bar bar, uint32_t n, T *A, T alpha, uint32_t diag_count)
+__device__ void add_identity_partial_impl(Bar bar, uint32_t n, T *A, T alpha, uint32_t diag_count)
 {
     uint32_t rank = bar.rank(), size = bar.size();
     for (uint32_t i = rank; i < n*n; i += size) {
@@ -116,15 +116,15 @@ __device__ void addI_partial_impl(Bar bar, uint32_t n, T *A, T alpha, uint32_t d
  * @param diag_count  Number of leading diagonal entries to bump (`<= n`).
  */
 template <typename T, bool TRAILING_SYNC = true>
-__device__ void addI_partial(uint32_t n, T *A, T alpha, uint32_t diag_count)
+__device__ void add_identity_partial(uint32_t n, T *A, T alpha, uint32_t diag_count)
 {
-    addI_partial_impl<BlockBarrier, T, TRAILING_SYNC>(BlockBarrier{}, n, A, alpha, diag_count);
+    add_identity_partial_impl<BlockBarrier, T, TRAILING_SYNC>(BlockBarrier{}, n, A, alpha, diag_count);
 }
 
 /**
  * @brief Add a scaled identity to the leading diagonal block, compile-time size.
  *
- * Compile-time `<N, DIAG_COUNT>` overload of addI_partial. NumPy equivalent:
+ * Compile-time `<N, DIAG_COUNT>` overload of add_identity_partial. NumPy equivalent:
  * `A[:DIAG_COUNT, :DIAG_COUNT] += alpha * np.eye(DIAG_COUNT)`.
  *
  * @tparam T           Scalar type (e.g. `float`, `double`).
@@ -134,7 +134,7 @@ __device__ void addI_partial(uint32_t n, T *A, T alpha, uint32_t diag_count)
  * @param alpha  Scalar added to each of the leading diagonal entries.
  */
 template <typename T, uint32_t N, uint32_t DIAG_COUNT, bool TRAILING_SYNC = true>
-__device__ void addI_partial(T *A, T alpha)
+__device__ void add_identity_partial(T *A, T alpha)
 {
-    addI_partial_impl<BlockBarrier, T, TRAILING_SYNC>(BlockBarrier{}, N, A, alpha, DIAG_COUNT);
+    add_identity_partial_impl<BlockBarrier, T, TRAILING_SYNC>(BlockBarrier{}, N, A, alpha, DIAG_COUNT);
 }

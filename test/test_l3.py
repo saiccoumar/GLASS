@@ -312,14 +312,14 @@ def test_packed_gemm(bins, k, case):
 @pytest.mark.parametrize("cond", [None, 1e4])  # well-conditioned + ill-conditioned
 @pytest.mark.parametrize("version", CG_SIMPLE)
 def test_inv(bins, n, cond, version):
-    """invertMatrix across the canonical thread sweep (incl. partial/odd/non-warp
+    """inv across the canonical thread sweep (incl. partial/odd/non-warp
     counts), two input conditionings. The augmented-row save loop must be
     grid-strided (`ind += size`); a non-strided `ind++` is a write-write race that
     compute-sanitizer racecheck flags even though every racing write stores the same
     value (so it is invisible at 32/256 — see test_hardening doc). Output must be
     byte-for-byte identical at every block size."""
     A = make_spd(n, seed=n, cond=cond)
-    # invertMatrix expects [A | I] layout (n*2n) column-major
+    # inv expects [A | I] layout (n*2n) column-major
     AI = np.hstack([A, np.eye(n, dtype=np.float32)])   # row layout (n x 2n)
     AI_col = np.asfortranarray(AI).ravel(order='F')
     expected = np.linalg.inv(A).astype(np.float32)
@@ -338,7 +338,7 @@ def test_inv(bins, n, cond, version):
 
 
 def _aug(M, d):
-    # [M | I] column-major augmented buffer for invertMatrix
+    # [M | I] column-major augmented buffer for inv
     return np.asfortranarray(np.hstack([M, np.eye(d, dtype=np.float32)])).ravel(order='F')
 
 

@@ -1,4 +1,4 @@
-// test_fused.cu — dedicated runner for the K-way fused invertMatrix / cholDecomp_InPlace.
+// test_fused.cu — dedicated runner for the K-way fused inv / potrf.
 //
 // CLI:
 //   test_fused <inv|chol> <threads> K d0 d1 ... d_{K-1} MAX_DIM <file0> <file1> ... <file_{K-1}>
@@ -19,10 +19,10 @@
 #include "helpers.cuh"
 
 __global__ void k_inv_fused(uint32_t K, const uint32_t* dims, uint32_t MAX_DIM, float** mats, float* s_temp) {
-    glass::invertMatrix<float>(K, dims, MAX_DIM, mats, s_temp);
+    glass::inv<float>(K, dims, MAX_DIM, mats, s_temp);
 }
 __global__ void k_chol_fused(uint32_t K, const uint32_t* dims, uint32_t MAX_DIM, float** mats) {
-    glass::cholDecomp_InPlace<float>(K, dims, MAX_DIM, mats);
+    glass::potrf<float>(K, dims, MAX_DIM, mats);
 }
 
 int main(int argc, char** argv) {

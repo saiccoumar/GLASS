@@ -65,7 +65,7 @@ namespace glass {
     #include "./src/base/L3/gemm_strided.cuh"
     #include "./src/base/L3/gemm_batched_indexed.cuh"
     #include "./src/base/L3/inv.cuh"
-    #include "./src/base/L3/chol_InPlace.cuh"
+    #include "./src/base/L3/potrf.cuh"
     #include "./src/base/L3/trsm.cuh"
     #include "./src/base/L3/ldlt.cuh"
     #include "./src/base/L3/posv.cuh"

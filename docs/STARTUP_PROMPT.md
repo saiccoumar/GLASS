@@ -33,8 +33,8 @@ validated (internal) `box_qp` solver, the `glass::warp::` single-warp primitives
 block-tridiagonal solvers. The BLAS/LAPACK surface has since expanded with new
 L1/L2/L3 ops: `iamax` (L1 pivot primitive); `trsv`/`trmv` (L2 triangular
 solve/matvec); `syrk`/`syr2k` (L3 symmetric rank-k/2k); `ldlt`/`ldlt_solve` (L3
-symmetric-indefinite); `posv`/`potrs` (L3 SPD solve), plus `invertMatrix_pivoted`,
-multi-RHS `posv`/`potrs`, K-way fused `invertMatrix`/`cholDecomp_InPlace`, and the
+symmetric-indefinite); `posv`/`potrs` (L3 SPD solve), plus `inv_pivoted`,
+multi-RHS `posv`/`potrs`, K-way fused `inv`/`potrf`, and the
 `glass::warp::{dot,axpy,copy,scal,gemv,trsv,iamax}` + composed `warp::posv` glue.
 Most recently (2026-06-24) a **contraction-parallel + higher-level family**:
 `gemm_reduced`/`gemv_reduced`/`syrk_reduced`, the `tensor_vec_contract` /

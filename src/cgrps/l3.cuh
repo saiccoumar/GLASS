@@ -127,12 +127,12 @@ __device__ void gemm(T alpha, const T *A, const T *B, T *C,
  * @param s_scratch  Shared scratch of `(2*dimA + 1) * sizeof(T)` bytes.
  * @param g       Cooperative thread group (defaults to the whole block).
  */
-// Delegates to the shared glass::invertMatrix_impl with a GroupBarrier.
+// Delegates to the shared glass::inv_impl with a GroupBarrier.
 template <typename T>
-__device__ void invertMatrix(uint32_t dimA, T *A, T *s_scratch,
+__device__ void inv(uint32_t dimA, T *A, T *s_scratch,
                               cgrps::thread_group g = cgrps::this_thread_block())
 {
-    invertMatrix_impl<GroupBarrier, T>(GroupBarrier{g}, dimA, A, s_scratch);
+    inv_impl<GroupBarrier, T>(GroupBarrier{g}, dimA, A, s_scratch);
 }
 
 /**
@@ -153,21 +153,21 @@ __device__ void invertMatrix(uint32_t dimA, T *A, T *s_scratch,
  * @param g      Cooperative thread group (defaults to the whole block).
  * @param s_fail Optional flag (CHECK only): set to 1 on a non-PD / NaN pivot, else 0. Ignored when null.
  */
-// cholDecomp_InPlace
+// potrf
 // CHECK (compile-out, default false): when true and s_fail non-null, rank 0 sets
 // *s_fail=1 on a non-PD / NaN pivot (else 0) — mirrors the base block overload.
 // s_fail is placed after g so existing (n, s_A[, g]) callers are unaffected.
-// Delegates to the shared glass::cholDecomp_InPlace_impl with a GroupBarrier.
+// Delegates to the shared glass::potrf_impl with a GroupBarrier.
 // NOTE on warp-tiled groups: the pivot is broadcast by re-reading shared after
 // the barrier. Safe for a block group (the default — a full block fence). A
 // shared re-read at warp scope can be cached stale by nvcc under caller
-// __restrict__ — prefer glass::warp::cholDecomp_InPlace there (it shfl-broadcasts).
+// __restrict__ — prefer glass::warp::potrf there (it shfl-broadcasts).
 template <typename T, bool CHECK = false>
-__device__ void cholDecomp_InPlace(uint32_t n, T *s_A,
+__device__ void potrf(uint32_t n, T *s_A,
                                     cgrps::thread_group g = cgrps::this_thread_block(),
                                     int *s_fail = nullptr)
 {
-    cholDecomp_InPlace_impl<GroupBarrier, T, CHECK>(GroupBarrier{g}, n, s_A, s_fail);
+    potrf_impl<GroupBarrier, T, CHECK>(GroupBarrier{g}, n, s_A, s_fail);
 }
 
 /**

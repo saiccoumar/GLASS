@@ -1,4 +1,4 @@
-"""Fused K-way invertMatrix / cholDecomp_InPlace tests.
+"""Fused K-way inv / potrf tests.
 
 Dedicated runner (test/cuda/test_fused.cu) to avoid contention on test_l3.
 Each (K, dims) case is checked per-matrix against a NumPy oracle and swept over
@@ -35,7 +35,7 @@ CASES = [
 
 
 def _aug(M, d):
-    # [M | I] column-major augmented buffer for invertMatrix
+    # [M | I] column-major augmented buffer for inv
     return np.asfortranarray(np.hstack([M, np.eye(d, dtype=np.float32)])).ravel(order="F")
 
 
