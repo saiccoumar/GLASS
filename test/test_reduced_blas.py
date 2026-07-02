@@ -12,12 +12,13 @@ import tempfile
 import numpy as np
 import pytest
 
+from conftest import THREAD_SWEEP, THREAD_SWEEP_CORE, make_vec
+
 RNG = np.random.default_rng(53)
 RTOL, ATOL = 2e-2, 2e-3
 
 GEMV = [(14, 14), (7, 21), (8, 3), (33, 5), (5, 33), (64, 3), (3, 7)]
 SYRK = [(14, 7), (8, 8), (5, 3), (33, 4), (7, 14), (64, 2)]
-THREADS_SWEEP = (1, 7, 31, 32, 33, 57, 64, 96, 128, 256)
 AL, BE = 1.5, 0.3
 
 
@@ -65,20 +66,25 @@ def test_gemv_reduced(bins, M, N, tr):
     x = RNG.random(xl).astype(np.float32)
     y0 = RNG.random(yl).astype(np.float32)
     expected = (AL * ((A.T @ x) if tr else (A @ x)) + BE * y0).astype(np.float32)
-    block = _gemv(bins["reduced_blas"], "block", 128, M, N, tr, A, x, y0.copy())
-    assert np.allclose(block, expected, rtol=RTOL, atol=ATOL)
+    outs = [_gemv(bins["reduced_blas"], "block", t, M, N, tr, A, x, y0.copy())
+            for t in THREAD_SWEEP_CORE]
+    assert np.allclose(outs[0], expected, rtol=RTOL, atol=ATOL)
+    for t, r in zip(THREAD_SWEEP_CORE[1:], outs[1:]):
+        assert np.array_equal(outs[0], r), f"thread-count non-invariance at {t}"
     for s, th in [("cgrps", 128), ("warp", 32)]:
         r = _gemv(bins["reduced_blas"], s, th, M, N, tr, A, x, y0.copy())
-        assert np.allclose(r, block, rtol=RTOL, atol=ATOL), f"{s} disagrees with block"
+        assert np.allclose(r, outs[0], rtol=RTOL, atol=ATOL), f"{s} disagrees with block"
 
 
 @pytest.mark.parametrize("M,N", [(14, 14), (33, 5), (64, 3)])
-def test_gemv_thread_invariance(bins, M, N):
+@pytest.mark.parametrize("kind", ["normal", "mixed"])
+def test_gemv_thread_invariance(bins, M, N, kind):
     A = RNG.random((M, N)).astype(np.float32)
-    x = RNG.random(N).astype(np.float32)
+    x = make_vec(N, seed=M + N, kind=kind)
     y0 = RNG.random(M).astype(np.float32)
-    outs = [_gemv(bins["reduced_blas"], "block", t, M, N, False, A, x, y0.copy()) for t in THREADS_SWEEP]
-    for t, r in zip(THREADS_SWEEP[1:], outs[1:]):
+    outs = [_gemv(bins["reduced_blas"], "block", t, M, N, False, A, x, y0.copy())
+            for t in THREAD_SWEEP]
+    for t, r in zip(THREAD_SWEEP[1:], outs[1:]):
         assert np.array_equal(outs[0], r), f"thread-count non-invariance at {t}"
 
 
@@ -92,19 +98,27 @@ def test_syrk_reduced(bins, R, C, tr):
     C0 = RNG.random((OUT, OUT)).astype(np.float32)
     C0 = (C0 + C0.T).astype(np.float32)
     expected = (AL * ((A.T @ A) if tr else (A @ A.T)) + BE * C0).astype(np.float32)
-    block = _syrk(bins["reduced_blas"], "block", 128, R, C, tr, A, C0.copy())
-    assert np.allclose(block, expected, rtol=RTOL, atol=ATOL)
-    assert np.allclose(block, block.T, rtol=1e-4, atol=1e-5), "C not symmetric"
+    outs = [_syrk(bins["reduced_blas"], "block", t, R, C, tr, A, C0.copy())
+            for t in THREAD_SWEEP_CORE]
+    assert np.allclose(outs[0], expected, rtol=RTOL, atol=ATOL)
+    assert np.allclose(outs[0], outs[0].T, rtol=1e-4, atol=1e-5), "C not symmetric"
+    for t, r in zip(THREAD_SWEEP_CORE[1:], outs[1:]):
+        assert np.array_equal(outs[0], r), f"thread-count non-invariance at {t}"
     for s, th in [("cgrps", 96), ("warp", 32)]:
         r = _syrk(bins["reduced_blas"], s, th, R, C, tr, A, C0.copy())
-        assert np.allclose(r, block, rtol=RTOL, atol=ATOL), f"{s} disagrees with block"
+        assert np.allclose(r, outs[0], rtol=RTOL, atol=ATOL), f"{s} disagrees with block"
 
 
 @pytest.mark.parametrize("R,C", [(14, 7), (33, 4), (8, 8)])
-def test_syrk_thread_invariance(bins, R, C):
+@pytest.mark.parametrize("kind", ["normal", "scaled"])
+def test_syrk_thread_invariance(bins, R, C, kind):
     A = RNG.random((R, C)).astype(np.float32)
+    if kind == "scaled":   # alternating huge/tiny columns stress the lane partials
+        A[:, 0::2] *= 1e3
+        A[:, 1::2] *= 1e-3
     C0 = RNG.random((R, R)).astype(np.float32)
     C0 = (C0 + C0.T).astype(np.float32)
-    outs = [_syrk(bins["reduced_blas"], "block", t, R, C, False, A, C0.copy()) for t in THREADS_SWEEP]
-    for t, r in zip(THREADS_SWEEP[1:], outs[1:]):
+    outs = [_syrk(bins["reduced_blas"], "block", t, R, C, False, A, C0.copy())
+            for t in THREAD_SWEEP]
+    for t, r in zip(THREAD_SWEEP[1:], outs[1:]):
         assert np.array_equal(outs[0], r), f"thread-count non-invariance at {t}"

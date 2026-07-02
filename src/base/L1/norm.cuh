@@ -4,6 +4,54 @@
 #include "reduce.cuh"
 
 /**
+ * @brief Euclidean (L2) norm into a separate buffer: `out[0] = ‖a‖₂` (default).
+ *
+ * Default halving-tree variant, completing the reduction family's bare surface
+ * (mirrors how the plain `reduce`/`dot`/`nrm2` engines are built): the block
+ * writes the per-element squares into `out`, tree-reduces them with the shared
+ * `reduce` machinery, and thread 0 takes the square root. Non-destructive —
+ * `a` is left untouched; `out` doubles as the length-`N` scratch (no shared
+ * scratch needed, unlike `vector_norm_fast`). Thread-count invariant: the
+ * pairwise tree gives byte-identical output at any block size. NumPy
+ * equivalent: `np.linalg.norm(a)`.
+ *
+ * @tparam T  Scalar type (e.g. `float`, `double`).
+ * @param N    Number of elements.
+ * @param a    Input vector of length `N` (read-only).
+ * @param out  Length-`N` scratch/output buffer; the result lands in `out[0]`.
+ */
+template <typename T, bool TRAILING_SYNC = true>
+__device__ void vector_norm(uint32_t N, T *a, T *out)
+{
+    uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
+    uint32_t size = blockDim.x * blockDim.y * blockDim.z;
+    for (uint32_t i = rank; i < N; i += size) out[i] = a[i]*a[i];
+    __syncthreads();
+    // Halving-tree total in out[0]; skip its trailing barrier — rank 0 wrote
+    // out[0] last and immediately owns the sqrt (same pattern as nrm2_impl).
+    reduce<T, false>(N, out);
+    if (rank == 0) out[0] = sqrtf(out[0]);
+    if constexpr (TRAILING_SYNC) __syncthreads();
+}
+
+/**
+ * @brief Euclidean (L2) norm into a separate buffer: `out[0] = ‖a‖₂`, compile-time size.
+ *
+ * Compile-time-`N` overload of the default halving-tree vector norm; leaves
+ * `a` untouched. NumPy equivalent: `np.linalg.norm(a)`.
+ *
+ * @tparam T  Scalar type (e.g. `float`, `double`).
+ * @tparam N  Number of elements (compile-time constant).
+ * @param a    Input vector of length `N` (read-only).
+ * @param out  Length-`N` scratch/output buffer; the result lands in `out[0]`.
+ */
+template <typename T, uint32_t N, bool TRAILING_SYNC = true>
+__device__ void vector_norm(T *a, T *out)
+{
+    vector_norm<T, TRAILING_SYNC>(N, a, out);
+}
+
+/**
  * @brief Euclidean (L2) norm into a separate buffer: `out[0] = ‖a‖₂`, low-memory variant.
  *
  * Writes the per-element squares into `out`, then thread 0 serially sums

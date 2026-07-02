@@ -157,6 +157,7 @@ def _hash_sources(cu_path: pathlib.Path) -> str:
               GLASS_DIR / "src" / "base" / "L1" / "scal.cuh",
               GLASS_DIR / "src" / "base" / "L1" / "asum.cuh",
               GLASS_DIR / "src" / "base" / "L1" / "nrm2.cuh",
+              GLASS_DIR / "src" / "base" / "L1" / "norm.cuh",
               GLASS_DIR / "src" / "base" / "L1" / "nrm1_diff.cuh",
               GLASS_DIR / "src" / "base" / "L1" / "symmetrize.cuh",
               GLASS_DIR / "test" / "cuda" / "test_symmetrize.cu",

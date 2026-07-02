@@ -1,5 +1,8 @@
 // test_l2.cu — dispatch L2 GLASS operations and print float32 results to stdout
-// Usage: ./test_l2 <op> <cg|simple> <m> <n> [args...] [files...]
+// Usage: ./test_l2 <op> <cg|simple> <threads> <m> <n> [args...] [files...]
+//
+// <threads> is the RUNTIME block size (launched as <<<1, threads>>>) so the
+// Python driver can sweep the canonical thread counts.
 //
 // Versions:
 //   cg     — glass::cgrps:: (cooperative groups)
@@ -12,7 +15,7 @@
 #include "helpers.cuh"
 #include "../../glass-cgrps.cuh"
 
-static int THREADS = 256;
+static int THREADS = 256;   // overwritten from argv[3] in main()
 
 // Read n float32 values from a .bin, round to int, upload to device int array.
 static int* read_device_ivec(const char* path, int n) {
@@ -110,12 +113,18 @@ __global__ void k_ger_simple(int m, int n, float alpha, float* x, float* y, floa
 // ─── main ────────────────────────────────────────────────────────────────────
 
 int main(int argc, char** argv) {
-    if (argc < 5) {
-        fprintf(stderr, "Usage: %s <op> <cg|simple> <m> <n> [args...] [files...]\n", argv[0]);
+    if (argc < 6) {
+        fprintf(stderr, "Usage: %s <op> <cg|simple> <threads> <m> <n> [args...] [files...]\n", argv[0]);
         return 1;
     }
     const char* op  = argv[1];
     const char* ver = argv[2];
+    // Runtime block size: argv[3] is <threads>. Splice it out of argv so every
+    // op handler below keeps its historical argument indices (m at argv[3], ...).
+    THREADS = atoi(argv[3]);
+    if (THREADS < 1) { fprintf(stderr, "bad thread count %d\n", THREADS); return 1; }
+    for (int i = 3; i + 1 < argc; i++) argv[i] = argv[i + 1];
+    argc--;
     int m = atoi(argv[3]);
     int n = atoi(argv[4]);
 
