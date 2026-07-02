@@ -1,0 +1,44 @@
+# CPU-only verification of the locally-generated GPU test receipt.
+#
+# The GPU suite runs on the lab box via test/run_gpu_proof.sh, which writes a
+# SIGNED receipt (test/gpu-proof.json) binding the git SHA, a fingerprint of
+# the library + test sources, per-test outcomes, and the GPU info. This job
+# verifies that receipt on every push — signature checked against the signer's
+# public keys at github.com/<user>.keys — so the repo carries an auditable
+# "the GPU suite passed on this code" check without any cloud GPU.
+#
+# Trust model: this is an attestation by a keyholder, not cryptographic proof
+# of GPU execution — see the pytest-gpu-proof security docs.
+name: verify-gpu-proof
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0   # ancestor-commit check needs history
+
+      - name: Check for a receipt
+        id: receipt
+        run: |
+          if [ -f test/gpu-proof.json ]; then echo "present=true" >> "$GITHUB_OUTPUT";
+          else echo "present=false" >> "$GITHUB_OUTPUT"; echo "::notice::no test/gpu-proof.json yet — run test/run_gpu_proof.sh on the GPU box and commit the receipt"; fi
+
+      - uses: actions/setup-python@v5
+        if: steps.receipt.outputs.present == 'true'
+        with:
+          python-version: '3.12'
+
+      - name: Install pytest-gpu-proof (submodule)
+        if: steps.receipt.outputs.present == 'true'
+        run: pip install ./test/pytest-gpu-proof
+
+      - name: Verify receipt
+        if: steps.receipt.outputs.present == 'true'
+        run: gpu-proof verify --receipt test/gpu-proof.json --require-gpu

@@ -440,3 +440,20 @@ def run_op(binary: pathlib.Path, op: str, version: str, args: list, inputs: list
     finally:
         for f in tmpfiles:
             os.unlink(f)
+
+
+# ─── gpu-proof integration (test/pytest-gpu-proof submodule) ───────────────────
+# test/run_gpu_proof.sh runs this suite with --gpu-proof-enable to emit a signed
+# receipt (test/gpu-proof.json) that the CPU-only verify-gpu-proof CI checks.
+# The plugin only records tests carrying the gpu_proof marker, so mark every
+# collected test. The marker is registered here too so plain runs (plugin not
+# installed) stay warning-free.
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "gpu_proof: recorded in the signed GPU-run receipt")
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        item.add_marker(pytest.mark.gpu_proof)
