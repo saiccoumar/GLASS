@@ -164,6 +164,13 @@ __device__ void transpose(uint32_t N, T *a,
                            cgrps::thread_group g = cgrps::this_thread_block())
 { transpose_impl<GroupBarrier, T, TRAILING_SYNC>(GroupBarrier{g}, N, a); }
 
+// ── symmetrize ────────────────────────────────────────────────────────────────
+/** @brief In-place symmetrization `A = 0.5*(A + Aᵀ)` (cgrps variant; see glass::symmetrize). */
+template <typename T, bool TRAILING_SYNC = true>
+__device__ void symmetrize(uint32_t n, T *A,
+                            cgrps::thread_group g = cgrps::this_thread_block())
+{ symmetrize_impl<GroupBarrier, T, TRAILING_SYNC>(GroupBarrier{g}, n, A); }
+
 // ── elementwise logic ─────────────────────────────────────────────────────────
 /** @brief Element-wise max `c = max(a, b)` (cgrps variant). */
 template <typename T, bool TRAILING_SYNC = true>

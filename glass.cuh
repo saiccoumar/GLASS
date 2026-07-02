@@ -34,6 +34,7 @@ namespace glass {
     #include "./src/base/L1/scal.cuh"
     #include "./src/base/L1/swap.cuh"
     #include "./src/base/L1/elementwise_logic.cuh"
+    #include "./src/base/L1/symmetrize.cuh"
     #include "./src/base/L1/transpose.cuh"
     #include "./src/base/L1/prefix_sum.cuh"
     #include "./src/base/L1/norm.cuh"
