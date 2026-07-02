@@ -72,9 +72,11 @@ namespace glass {
     #include "./src/base/L3/posv.cuh"
     #include "./src/base/L3/riccati.cuh"
 
-    /*  block-tridiagonal: glass::bdmv (matvec) + glass::pcg (solver)  */
+    /*  block-tridiagonal: glass::bdmv (matvec), glass::bdsv (direct solve),
+        glass::pcg (iterative solver)  */
     #include "./src/base/banded/bdmv.cuh"
     #include "./src/base/banded/block_access.cuh"
+    #include "./src/base/banded/bdsv.cuh"
     #include "./src/base/pcg/solve.cuh"
 }
 
