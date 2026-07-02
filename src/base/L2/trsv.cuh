@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include "../flags.cuh"   // FillMode / Diag
 
 // ─────────────────────────────────────────────────────────────────────────────
 // trsv — triangular solve op(A) x = b, in place (BLAS TRSV).
@@ -10,24 +11,28 @@
 // combination.
 //
 // Flag semantics (NORMATIVE):
-//   LOWER  — which stored triangle of A holds the data (true = lower, the
-//            strictly-upper entries are ignored; false = upper).
-//   UNIT   — when true the diagonal is implicitly 1 (A's diagonal is not read
-//            and the divide is skipped).
+//   FILL   — which stored triangle of A holds the data (FillMode::Lower: the
+//            strictly-upper entries are ignored; FillMode::Upper: vice versa.
+//            FillMode::Full is invalid here — a triangular op needs a triangle).
+//   DIAG   — Diag::Unit means the diagonal is implicitly 1 (A's diagonal is not
+//            read and the divide is skipped); Diag::NonUnit reads it.
 //   TRANSPOSE  — when true the routine works with op(A) = Aᵀ against that SAME
 //            stored triangle: trsv solves Aᵀx = b, trmv computes Aᵀx.
 //
 // op(A) is lower-triangular (forward sweep) when
-//   (LOWER && !TRANSPOSE) || (!LOWER && TRANSPOSE)
+//   (FILL==Lower) != TRANSPOSE
 // and upper-triangular (backward sweep) otherwise.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // core impl: explicit rank/size + flags. Solves op(A) x = b in place.
-template <typename T, bool LOWER, bool UNIT, bool TRANSPOSE>
+template <typename T, FillMode FILL, Diag DIAG, bool TRANSPOSE>
 __device__ void trsv_impl(uint32_t rank, uint32_t size, uint32_t n, const T* A, T* x)
 {
+    static_assert(FILL != FillMode::Full, "trsv: FILL must name a triangle (Lower or Upper)");
+    constexpr bool LOWER = (FILL == FillMode::Lower);
+    constexpr bool UNIT  = (DIAG == Diag::Unit);
     // op(A) lower-triangular ⇒ forward elimination over pivots k = 0..n-1.
-    constexpr bool FORWARD = (LOWER && !TRANSPOSE) || (!LOWER && TRANSPOSE);
+    constexpr bool FORWARD = (LOWER != TRANSPOSE);
     for (uint32_t step = 0; step < n; step++) {
         uint32_t k = FORWARD ? step : (n - 1 - step);
         // resolve pivot x[k] = x[k] / op(A)[k][k]   (diag is A[k+k*n])
@@ -56,29 +61,29 @@ __device__ void trsv_impl(uint32_t rank, uint32_t size, uint32_t n, const T* A, 
  *
  * Solves the triangular system for `x`, overwriting the right-hand side `x`
  * (`x` holds `b` on entry, the solution on return). `A` is an `n×n` triangular
- * matrix stored column-major; only the triangle selected by `LOWER` is read.
+ * matrix stored column-major; only the triangle selected by `FILL` is read.
  * Set `TRANSPOSE=true` to solve `Aᵀx = b` against that same stored triangle, and
- * `UNIT=true` for an implicit unit diagonal (the diagonal of `A` is not read).
- * Column-oriented elimination (forward when `op(A)` is lower-triangular, i.e.
- * `(LOWER && !TRANSPOSE) || (!LOWER && TRANSPOSE)`, backward otherwise); ends with a
- * trailing `__syncthreads()` so it composes without a defensive barrier.
+ * `DIAG=Diag::Unit` for an implicit unit diagonal (the diagonal of `A` is not
+ * read). Column-oriented elimination (forward when `op(A)` is lower-triangular,
+ * i.e. `(FILL==Lower) != TRANSPOSE`, backward otherwise); ends with a trailing
+ * `__syncthreads()` so it composes without a defensive barrier.
  * SciPy equivalent:
- * `x = scipy.linalg.solve_triangular(A, b, lower=LOWER, unit_diagonal=UNIT, trans=(1 if TRANSPOSE else 0))`.
+ * `x = scipy.linalg.solve_triangular(A, b, lower=(FILL==Lower), unit_diagonal=(DIAG==Unit), trans=(1 if TRANSPOSE else 0))`.
  *
- * @tparam T      Scalar type (e.g. `float`, `double`).
- * @tparam LOWER  When true `A`'s lower triangle holds the data (default true).
- * @tparam UNIT   When true the diagonal is implicitly 1 (default false).
+ * @tparam T     Scalar type (e.g. `float`, `double`).
+ * @tparam FILL  Which triangle of `A` holds the data (default `FillMode::Lower`).
+ * @tparam DIAG  `Diag::Unit` for an implicit unit diagonal (default `Diag::NonUnit`).
  * @tparam TRANSPOSE  When true solve `Aᵀx = b` (default false).
  * @param n  Dimension (`A` is `n×n`, `x` has length `n`).
  * @param A  Triangular matrix (column-major, `n*n` elements; read-only).
  * @param x  In/out right-hand side; on return holds the solution.
  */
-template <typename T, bool LOWER = true, bool UNIT = false, bool TRANSPOSE = false>
+template <typename T, FillMode FILL = FillMode::Lower, Diag DIAG = Diag::NonUnit, bool TRANSPOSE = false>
 __device__ void trsv(uint32_t n, const T* A, T* x)
 {
     uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
     uint32_t size = blockDim.x * blockDim.y * blockDim.z;
-    trsv_impl<T, LOWER, UNIT, TRANSPOSE>(rank, size, n, A, x);
+    trsv_impl<T, FILL, DIAG, TRANSPOSE>(rank, size, n, A, x);
 }
 
 // ─── trsv: compile-time size ──────────────────────────────────────────────────
@@ -88,22 +93,22 @@ __device__ void trsv(uint32_t n, const T* A, T* x)
  *
  * Same as the runtime `trsv` but with the dimension as a template parameter.
  * SciPy equivalent:
- * `x = scipy.linalg.solve_triangular(A, b, lower=LOWER, unit_diagonal=UNIT, trans=(1 if TRANSPOSE else 0))`.
+ * `x = scipy.linalg.solve_triangular(A, b, lower=(FILL==Lower), unit_diagonal=(DIAG==Unit), trans=(1 if TRANSPOSE else 0))`.
  *
- * @tparam T      Scalar type (e.g. `float`, `double`).
- * @tparam N      Dimension (`A` is `N×N`, `x` has length `N`).
- * @tparam LOWER  When true `A`'s lower triangle holds the data (default true).
- * @tparam UNIT   When true the diagonal is implicitly 1 (default false).
+ * @tparam T     Scalar type (e.g. `float`, `double`).
+ * @tparam N     Dimension (`A` is `N×N`, `x` has length `N`).
+ * @tparam FILL  Which triangle of `A` holds the data (default `FillMode::Lower`).
+ * @tparam DIAG  `Diag::Unit` for an implicit unit diagonal (default `Diag::NonUnit`).
  * @tparam TRANSPOSE  When true solve `Aᵀx = b` (default false).
  * @param A  Triangular matrix (column-major, `N*N` elements; read-only).
  * @param x  In/out right-hand side; on return holds the solution.
  */
-template <typename T, uint32_t N, bool LOWER = true, bool UNIT = false, bool TRANSPOSE = false>
+template <typename T, uint32_t N, FillMode FILL = FillMode::Lower, Diag DIAG = Diag::NonUnit, bool TRANSPOSE = false>
 __device__ void trsv(const T* A, T* x)
 {
     uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
     uint32_t size = blockDim.x * blockDim.y * blockDim.z;
-    trsv_impl<T, LOWER, UNIT, TRANSPOSE>(rank, size, N, A, x);
+    trsv_impl<T, FILL, DIAG, TRANSPOSE>(rank, size, N, A, x);
 }
 
 // ─── trmv: out-of-place core ──────────────────────────────────────────────────
@@ -111,15 +116,18 @@ __device__ void trsv(const T* A, T* x)
 // core impl: explicit rank/size + flags. Computes y = op(A) x out of place.
 // Each thread owns disjoint outputs y[i] and only reads the intact x — no
 // interior barrier required.
-template <typename T, bool LOWER, bool UNIT, bool TRANSPOSE>
+template <typename T, FillMode FILL, Diag DIAG, bool TRANSPOSE>
 __device__ void trmv_impl(uint32_t rank, uint32_t size, uint32_t n,
                           const T* A, const T* x, T* y)
 {
+    static_assert(FILL != FillMode::Full, "trmv: FILL must name a triangle (Lower or Upper)");
+    constexpr bool LOWER = (FILL == FillMode::Lower);
+    constexpr bool UNIT  = (DIAG == Diag::Unit);
     for (uint32_t i = rank; i < n; i += size) {
         // y[i] = sum_k op(A)[i][k] * x[k], summed over the triangle.
         // op(A)[i][k] = TRANSPOSE ? A[k + i*n] : A[i + k*n]; lower-triangular op
         // (forward) ⇒ k <= i, upper-triangular op ⇒ k >= i.
-        constexpr bool LOWER_OP = (LOWER && !TRANSPOSE) || (!LOWER && TRANSPOSE);
+        constexpr bool LOWER_OP = (LOWER != TRANSPOSE);
         T acc = UNIT ? x[i] : static_cast<T>(0);
         if (LOWER_OP) {
             uint32_t k_end = UNIT ? i : (i + 1);      // exclude diag when UNIT
@@ -139,28 +147,28 @@ __device__ void trmv_impl(uint32_t rank, uint32_t size, uint32_t n,
  *
  * Computes the triangular matvec into a separate output `y` (distinct from the
  * input `x`). `A` is an `n×n` triangular matrix stored column-major; only the
- * triangle selected by `LOWER` is read. Set `TRANSPOSE=true` to compute `Aᵀx`
- * against that same stored triangle, and `UNIT=true` for an implicit unit
+ * triangle selected by `FILL` is read. Set `TRANSPOSE=true` to compute `Aᵀx`
+ * against that same stored triangle, and `DIAG=Diag::Unit` for an implicit unit
  * diagonal. No interior barrier: each thread owns disjoint outputs and reads
  * the intact `x`. NumPy equivalent (lower, non-unit): `y = np.tril(A) @ x`
  * (upper: `np.triu(A) @ x`; transposed: `op(A).T @ x`; unit: diagonal forced
  * to 1).
  *
- * @tparam T      Scalar type (e.g. `float`, `double`).
- * @tparam LOWER  When true `A`'s lower triangle holds the data (default true).
- * @tparam UNIT   When true the diagonal is implicitly 1 (default false).
+ * @tparam T     Scalar type (e.g. `float`, `double`).
+ * @tparam FILL  Which triangle of `A` holds the data (default `FillMode::Lower`).
+ * @tparam DIAG  `Diag::Unit` for an implicit unit diagonal (default `Diag::NonUnit`).
  * @tparam TRANSPOSE  When true compute `Aᵀx` (default false).
  * @param n  Dimension (`A` is `n×n`, `x` and `y` have length `n`).
  * @param A  Triangular matrix (column-major, `n*n` elements; read-only).
  * @param x  Input vector (length `n`; read-only).
  * @param y  Output vector (length `n`); must not alias `x`.
  */
-template <typename T, bool LOWER = true, bool UNIT = false, bool TRANSPOSE = false>
+template <typename T, FillMode FILL = FillMode::Lower, Diag DIAG = Diag::NonUnit, bool TRANSPOSE = false>
 __device__ void trmv(uint32_t n, const T* A, const T* x, T* y)
 {
     uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
     uint32_t size = blockDim.x * blockDim.y * blockDim.z;
-    trmv_impl<T, LOWER, UNIT, TRANSPOSE>(rank, size, n, A, x, y);
+    trmv_impl<T, FILL, DIAG, TRANSPOSE>(rank, size, n, A, x, y);
 }
 
 /**
@@ -169,21 +177,21 @@ __device__ void trmv(uint32_t n, const T* A, const T* x, T* y)
  * Compile-time-`N` overload of the out-of-place TRMV. NumPy equivalent (lower,
  * non-unit): `y = np.tril(A) @ x`.
  *
- * @tparam T      Scalar type (e.g. `float`, `double`).
- * @tparam N      Dimension (`A` is `N×N`, `x` and `y` have length `N`).
- * @tparam LOWER  When true `A`'s lower triangle holds the data (default true).
- * @tparam UNIT   When true the diagonal is implicitly 1 (default false).
+ * @tparam T     Scalar type (e.g. `float`, `double`).
+ * @tparam N     Dimension (`A` is `N×N`, `x` and `y` have length `N`).
+ * @tparam FILL  Which triangle of `A` holds the data (default `FillMode::Lower`).
+ * @tparam DIAG  `Diag::Unit` for an implicit unit diagonal (default `Diag::NonUnit`).
  * @tparam TRANSPOSE  When true compute `Aᵀx` (default false).
  * @param A  Triangular matrix (column-major, `N*N` elements; read-only).
  * @param x  Input vector (length `N`; read-only).
  * @param y  Output vector (length `N`); must not alias `x`.
  */
-template <typename T, uint32_t N, bool LOWER = true, bool UNIT = false, bool TRANSPOSE = false>
+template <typename T, uint32_t N, FillMode FILL = FillMode::Lower, Diag DIAG = Diag::NonUnit, bool TRANSPOSE = false>
 __device__ void trmv(const T* A, const T* x, T* y)
 {
     uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
     uint32_t size = blockDim.x * blockDim.y * blockDim.z;
-    trmv_impl<T, LOWER, UNIT, TRANSPOSE>(rank, size, N, A, x, y);
+    trmv_impl<T, FILL, DIAG, TRANSPOSE>(rank, size, N, A, x, y);
 }
 
 // ─── trmv: in-place wrapper (needs scratch) ──────────────────────────────────
@@ -209,21 +217,21 @@ __host__ __device__ inline constexpr std::size_t trmv_scratch_bytes(uint32_t n) 
  * with a single barrier in between. Ends with a trailing `__syncthreads()`.
  * NumPy equivalent (lower, non-unit): `x = np.tril(A) @ x`.
  *
- * @tparam T      Scalar type (e.g. `float`, `double`).
- * @tparam LOWER  When true `A`'s lower triangle holds the data (default true).
- * @tparam UNIT   When true the diagonal is implicitly 1 (default false).
+ * @tparam T     Scalar type (e.g. `float`, `double`).
+ * @tparam FILL  Which triangle of `A` holds the data (default `FillMode::Lower`).
+ * @tparam DIAG  `Diag::Unit` for an implicit unit diagonal (default `Diag::NonUnit`).
  * @tparam TRANSPOSE  When true compute `Aᵀx` (default false).
  * @param n        Dimension (`A` is `n×n`, `x` and `scratch` have length `n`).
  * @param A        Triangular matrix (column-major, `n*n` elements; read-only).
  * @param x        In/out vector (length `n`); on return holds `op(A) x`.
  * @param scratch  Workspace of length `n` (see `trmv_scratch_bytes`).
  */
-template <typename T, bool LOWER = true, bool UNIT = false, bool TRANSPOSE = false>
+template <typename T, FillMode FILL = FillMode::Lower, Diag DIAG = Diag::NonUnit, bool TRANSPOSE = false>
 __device__ void trmv(uint32_t n, const T* A, T* x, T* scratch)
 {
     uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
     uint32_t size = blockDim.x * blockDim.y * blockDim.z;
-    trmv_impl<T, LOWER, UNIT, TRANSPOSE>(rank, size, n, A, x, scratch);
+    trmv_impl<T, FILL, DIAG, TRANSPOSE>(rank, size, n, A, x, scratch);
     __syncthreads();                              // scratch fully written before read-back
     for (uint32_t i = rank; i < n; i += size) x[i] = scratch[i];
     __syncthreads();
@@ -235,21 +243,21 @@ __device__ void trmv(uint32_t n, const T* A, T* x, T* scratch)
  * Compile-time-`N` overload of the in-place TRMV. NumPy equivalent (lower,
  * non-unit): `x = np.tril(A) @ x`.
  *
- * @tparam T      Scalar type (e.g. `float`, `double`).
- * @tparam N      Dimension (`A` is `N×N`, `x` and `scratch` have length `N`).
- * @tparam LOWER  When true `A`'s lower triangle holds the data (default true).
- * @tparam UNIT   When true the diagonal is implicitly 1 (default false).
+ * @tparam T     Scalar type (e.g. `float`, `double`).
+ * @tparam N     Dimension (`A` is `N×N`, `x` and `scratch` have length `N`).
+ * @tparam FILL  Which triangle of `A` holds the data (default `FillMode::Lower`).
+ * @tparam DIAG  `Diag::Unit` for an implicit unit diagonal (default `Diag::NonUnit`).
  * @tparam TRANSPOSE  When true compute `Aᵀx` (default false).
  * @param A        Triangular matrix (column-major, `N*N` elements; read-only).
  * @param x        In/out vector (length `N`); on return holds `op(A) x`.
  * @param scratch  Workspace of length `N` (see `trmv_scratch_bytes`).
  */
-template <typename T, uint32_t N, bool LOWER = true, bool UNIT = false, bool TRANSPOSE = false>
+template <typename T, uint32_t N, FillMode FILL = FillMode::Lower, Diag DIAG = Diag::NonUnit, bool TRANSPOSE = false>
 __device__ void trmv(const T* A, T* x, T* scratch)
 {
     uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
     uint32_t size = blockDim.x * blockDim.y * blockDim.z;
-    trmv_impl<T, LOWER, UNIT, TRANSPOSE>(rank, size, N, A, x, scratch);
+    trmv_impl<T, FILL, DIAG, TRANSPOSE>(rank, size, N, A, x, scratch);
     __syncthreads();
     for (uint32_t i = rank; i < N; i += size) x[i] = scratch[i];
     __syncthreads();

@@ -2,7 +2,7 @@
 //
 // Variants per size N (square SPD problem with NRHS=1):
 //   pure-SIMT potrf        — glass::potrf<T, N>
-//   pure-SIMT chol+trsm           — potrf then glass::trsm<T, N>
+//   pure-SIMT chol+trsm           — potrf then glass::trsm<T, N, 1>
 //   glass::nvidia potrf    — cuSOLVERDx potrf via glass::nvidia::potrf<T, N, TC>
 //   glass::nvidia chol+trsm       — potrf then glass::nvidia::trsm<T, N, 1, TC>
 //   glass::nvidia posv            — fused factor+solve via glass::nvidia::posv<T, N, 1, TC>
@@ -73,7 +73,7 @@ __global__ void k_simt_chol_trsm(const float* A_master, const float* b_master,
         __syncthreads();
         glass::potrf<float, N>(s_A);
         __syncthreads();
-        glass::trsm<float, N>(s_A, s_b);
+        glass::trsm<float, N, 1>(s_A, s_b);
         __syncthreads();
         if (threadIdx.x == 0) sink[rep & 0xFF] = s_b[0];
         __syncthreads();

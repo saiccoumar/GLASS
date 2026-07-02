@@ -21,6 +21,11 @@
 #include "helpers.cuh"
 #include "../../glass.cuh"
 
+// bool → enum translators for the flag-templated test kernels
+__host__ __device__ constexpr glass::FillMode FM(bool lower) { return lower ? glass::FillMode::Lower : glass::FillMode::Upper; }
+__host__ __device__ constexpr glass::Diag     DG(bool unit)  { return unit ? glass::Diag::Unit : glass::Diag::NonUnit; }
+
+
 // ─── L1 kernels (runtime n; one warp per problem) ────────────────────────────
 __global__ void k_dot_warp(int n, int W, float* x, float* y, float* out) {
     int w = threadIdx.y;
@@ -71,7 +76,7 @@ __global__ void k_scal_warp(int n, int W, float alpha, float* x) {
     template <bool LOWER, bool UNIT, bool TRANSPOSE>                                           \
     __global__ void k_trsv_warp_##Nc(int W, float* __restrict__ A, float* __restrict__ b){\
         int w = threadIdx.y; if (w >= W) return;                                          \
-        glass::warp::trsv<float, Nc, LOWER, UNIT, TRANSPOSE>(A + w*Nc*Nc, b + w*Nc);          \
+        glass::warp::trsv<float, Nc, FM(LOWER), DG(UNIT), TRANSPOSE>(A + w*Nc*Nc, b + w*Nc);          \
     }                                                                                       \
     __global__ void k_posv_warp_##Nc(int W, float* __restrict__ A, float* __restrict__ b){\
         int w = threadIdx.y; if (w >= W) return;                                          \

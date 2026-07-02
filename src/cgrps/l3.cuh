@@ -171,25 +171,31 @@ __device__ void potrf(uint32_t n, T *s_A,
 }
 
 /**
- * @brief Lower-triangular solve `L x = b` in place via forward substitution (cooperative-groups variant).
+ * @brief Triangular solve with multiple right-hand sides `op(A) X = B`, in place (cooperative-groups variant).
  *
- * Solves for `x` given lower-triangular `L` (column-major) and right-hand side
- * `b`, overwriting `b` with the solution. SciPy equivalent:
- * `x = scipy.linalg.solve_triangular(L, b, lower=True)`.
+ * Solves the triangular system for every column of `B` (`n×nrhs`, column-major),
+ * overwriting `B` with `X`; flags match the block `glass::trsm` (`FILL` names
+ * the stored triangle, `DIAG` the implicit-unit choice, `TRANSPOSE` solves
+ * `Aᵀ X = B`). SciPy equivalent:
+ * `X = scipy.linalg.solve_triangular(A, B, lower=(FILL==Lower), unit_diagonal=(DIAG==Unit), trans=(1 if TRANSPOSE else 0))`.
  *
- * @tparam T  Scalar type.
- * @param n  Dimension (L is n x n, b has length n).
- * @param L  Lower-triangular matrix (column-major).
- * @param b  In/out right-hand side; on return holds the solution x.
- * @param g  Cooperative thread group (defaults to the whole block).
+ * @tparam T     Scalar type.
+ * @tparam FILL  Which triangle of `A` holds the data (default `FillMode::Lower`).
+ * @tparam DIAG  `Diag::Unit` for an implicit unit diagonal (default `Diag::NonUnit`).
+ * @tparam TRANSPOSE  When true solve `Aᵀ X = B` (default false).
+ * @param n     Dimension (`A` is `n×n`; each column of `B` has length `n`).
+ * @param nrhs  Number of right-hand sides (columns of `B`).
+ * @param A     Triangular matrix (column-major; read-only).
+ * @param B     In/out right-hand sides (`n×nrhs`, column-major); on return holds `X`.
+ * @param g     Cooperative thread group (defaults to the whole block).
  */
 // Delegates to the shared glass::trsm_impl with a GroupBarrier. For a warp-tiled
-// group prefer glass::warp::trsm (register-broadcast pivot) — see base/L3/trsm.cuh.
-template <typename T>
-__device__ void trsm(uint32_t n, T *L, T *b,
+// group prefer glass::warp::trsv/trsm (register-broadcast pivot) — see base/L3/trsm.cuh.
+template <typename T, FillMode FILL = FillMode::Lower, Diag DIAG = Diag::NonUnit, bool TRANSPOSE = false>
+__device__ void trsm(uint32_t n, uint32_t nrhs, const T *A, T *B,
                      cgrps::thread_group g = cgrps::this_thread_block())
 {
-    trsm_impl<GroupBarrier, T>(GroupBarrier{g}, n, L, b);
+    trsm_impl<GroupBarrier, T, FILL, DIAG, TRANSPOSE>(GroupBarrier{g}, n, nrhs, A, B);
 }
 
 // ─── contraction-parallel GEMM (cooperative-groups variant) ──────────────────

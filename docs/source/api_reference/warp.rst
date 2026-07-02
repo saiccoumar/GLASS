@@ -28,9 +28,11 @@ rendered signatures appear on the :doc:`l1`, :doc:`l2`, and :doc:`l3` pages.
 * ``glass::warp::gemm`` — compile-time-size GEMM across one warp (e.g. 4×4
   homogeneous-transform multiplies).
 * ``glass::warp::potrf`` — small SPD Cholesky factor.
-* ``glass::warp::trsv`` — flagged triangular solve (``LOWER`` / ``UNIT`` /
-  ``TRANSPOSE``), subsuming the lower ``glass::warp::trsm`` /
-  ``glass::warp::trsm_transpose``.
+* ``glass::warp::trsv`` — flagged triangular solve (``FillMode`` / ``Diag`` /
+  ``TRANSPOSE``) covering every triangle/unit/transpose combination in one
+  unified warp body.
+* ``glass::warp::trsm`` — the multi-RHS form (``N×NRHS``, same flags); all
+  right-hand sides share each step's ``__syncwarp``.
 * ``glass::warp::posv`` — the **composed warp-per-problem SPD solve**
   (Cholesky → forward/back ``trsv``), proving the L1/L2/L3 glue composes into a
   complete per-warp linear solve. See :doc:`l3`.

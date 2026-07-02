@@ -224,8 +224,7 @@ When the buffer is reached through a caller `__restrict__` pointer under aggress
 (observed: sm_120 / CUDA 13.2, `-O3`), nvcc can **cache that shared load stale** — the non-writing
 lanes read a previous value, so an in-place warp solve returns wrong results for a fraction of
 inputs. `__syncwarp()` guarantees *execution* convergence, not that the compiler reloads the
-shared address. The fix (`1df6e40`, in `warp::potrf` / `warp::trsm` /
-`warp::trsm_transpose`):
+shared address. The fix (`1df6e40`, in `warp::potrf` / `warp::trsv`):
 
 ```cpp
 T diag = static_cast<T>(0);

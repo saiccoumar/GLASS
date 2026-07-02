@@ -453,14 +453,38 @@ def test_chol(bins, n, version):
 # ─── trsm ─────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("n", [3, 4, 6, 8])
+@pytest.mark.parametrize("nrhs", [1, 3])
+@pytest.mark.parametrize("transpose", [False, True])
 @pytest.mark.parametrize("version", CG_SIMPLE)
-def test_trsm(bins, n, version):
+def test_trsm(bins, n, nrhs, transpose, version):
+    if version == "cg" and transpose:
+        pytest.skip("cg kernel covers the default-flag path only")
     L = make_lower_triangular(n, rng=RNG)
-    b = RNG.random(n).astype(np.float32)
+    B = RNG.random((n, nrhs)).astype(np.float32)
     L_col = np.asfortranarray(L).ravel(order='F')
-    result = run_op(bins["l3"], "trsm", version, args=[n], inputs=[L_col, b])
-    # Verify L @ result == b (residual check avoids scipy dependency)
-    residual = L.astype(np.float64) @ result.astype(np.float64) - b.astype(np.float64)
+    B_col = np.asfortranarray(B).ravel(order='F')
+    result = run_op(bins["l3"], "trsm", version,
+                    args=[n, nrhs, int(transpose)], inputs=[L_col, B_col])
+    X = result.reshape(n, nrhs, order='F')
+    # Verify op(L) @ X == B (residual check avoids scipy dependency)
+    opL = L.T if transpose else L
+    residual = opL.astype(np.float64) @ X.astype(np.float64) - B.astype(np.float64)
+    assert np.allclose(residual, 0, atol=1e-3)
+
+
+@pytest.mark.parametrize("transpose", [False, True])
+def test_trsm_warp_7_3(bins, transpose):
+    # Single-warp multi-RHS trsm (compile-time N=7, NRHS=3), forward + transpose.
+    n, nrhs = 7, 3
+    L = make_lower_triangular(n, rng=RNG)
+    B = RNG.random((n, nrhs)).astype(np.float32)
+    L_col = np.asfortranarray(L).ravel(order='F')
+    B_col = np.asfortranarray(B).ravel(order='F')
+    result = run_op(bins["l3"], "trsm_warp", "warp",
+                    args=[int(transpose)], inputs=[L_col, B_col])
+    X = result.reshape(n, nrhs, order='F')
+    opL = L.T if transpose else L
+    residual = opL.astype(np.float64) @ X.astype(np.float64) - B.astype(np.float64)
     assert np.allclose(residual, 0, atol=1e-3)
 
 
@@ -468,7 +492,7 @@ def test_trsm(bins, n, version):
 
 
 def test_posv_warp_7(bins):
-    # Single-warp SPD solve A x = b via warp:: chol + trsm + trsm_transpose (N=7).
+    # Single-warp SPD solve A x = b via warp:: potrf + trsv forward/back (N=7).
     n = 7
     A = make_spd(n, rng=RNG)
     b = RNG.random(n).astype(np.float32)

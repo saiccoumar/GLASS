@@ -54,7 +54,8 @@ but is not part of the public surface (see `docs/open-tasks/qp_solver_scope.md`)
 
 Recent L1/L2/L3 additions (all single-block, thread-count invariant): `iamax`
 (L1, BLAS i_amax pivot primitive); `trsv` / `trmv` (L2 triangular solve / matvec,
-`LOWER`/`UNIT`/`TRANSPOSE` template flags); `syrk` / `syr2k` (L3 symmetric rank-k/2k,
+`FillMode`/`Diag` enums + `TRANSPOSE` flag) and `trsm` (L3 multi-RHS triangular solve,
+same flags); `syrk` / `syr2k` (L3 symmetric rank-k/2k,
 both `AAᵀ` and `AᵀA` via a `TRANSPOSE` flag, `FillMode` Lower/Upper/Full); `ldlt` /
 `ldlt_solve` (L3 symmetric-indefinite LDLᵀ, non-pivoted, signature reserves
 `bool pivot`/`piv` for a future Bunch-Kaufman path); `posv` / `potrs` (L3 SPD

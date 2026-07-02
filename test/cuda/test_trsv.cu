@@ -14,17 +14,22 @@
 #include "helpers.cuh"
 #include "../../glass.cuh"
 
+// bool → enum translators for the flag-templated test kernels
+__host__ __device__ constexpr glass::FillMode FM(bool lower) { return lower ? glass::FillMode::Lower : glass::FillMode::Upper; }
+__host__ __device__ constexpr glass::Diag     DG(bool unit)  { return unit ? glass::Diag::Unit : glass::Diag::NonUnit; }
+
+
 // ── trsv kernels (templated over the 3 flags) ─────────────────────────────────
 template <bool LOWER, bool UNIT, bool TRANSPOSE>
 __global__ void k_trsv(uint32_t n, const float* A, float* x) {
-    glass::trsv<float, LOWER, UNIT, TRANSPOSE>(n, A, x);
+    glass::trsv<float, FM(LOWER), DG(UNIT), TRANSPOSE>(n, A, x);
 }
 
 // ── trmv in-place kernels (templated over the 3 flags) ────────────────────────
 template <bool LOWER, bool UNIT, bool TRANSPOSE>
 __global__ void k_trmv(uint32_t n, const float* A, float* x) {
     extern __shared__ float scratch[];
-    glass::trmv<float, LOWER, UNIT, TRANSPOSE>(n, A, x, scratch);
+    glass::trmv<float, FM(LOWER), DG(UNIT), TRANSPOSE>(n, A, x, scratch);
 }
 
 int main(int argc, char** argv) {

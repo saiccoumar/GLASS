@@ -57,8 +57,8 @@ template <typename T>
 __device__ void posv(uint32_t n, T *A, T *b)
 {
     potrf<T>(n, A);            // A -> L (lower); trailing __syncthreads
-    trsv<T, true, false, false>(n, A, b);  // forward: L y = b
-    trsv<T, true, false, true>(n, A, b);   // back:    Lᵀ x = y
+    trsv<T>(n, A, b);                                                        // forward: L y = b
+    trsv<T, FillMode::Lower, Diag::NonUnit, /*TRANSPOSE=*/true>(n, A, b);    // back:   Lᵀ x = y
 }
 
 /**
@@ -93,8 +93,8 @@ __device__ void posv(T *A, T *b) { posv<T>(N, A, b); }
 template <typename T>
 __device__ void potrs(uint32_t n, const T *L, T *b)
 {
-    trsv<T, true, false, false>(n, L, b);  // forward: L y = b
-    trsv<T, true, false, true>(n, L, b);   // back:    Lᵀ x = y
+    trsv<T>(n, L, b);                                                        // forward: L y = b
+    trsv<T, FillMode::Lower, Diag::NonUnit, /*TRANSPOSE=*/true>(n, L, b);    // back:   Lᵀ x = y
 }
 
 /**
@@ -121,9 +121,10 @@ __device__ void potrs(const T *L, T *b) { potrs<T>(N, L, b); }
  *
  * `B` (and `X`) is `n × nrhs` stored **column-major**: column `c` begins at
  * `B + c*n` and occupies `n` contiguous elements. The Cholesky factor completes
- * before the first column's solve (its trailing `__syncthreads()`), and each
- * `trsv` self-syncs, so no extra barrier is needed between columns. Thread-count
- * invariant. NumPy equivalent: `X = np.linalg.solve(A, B)` (A SPD, B `n×nrhs`).
+ * before the solve (its trailing `__syncthreads()`); all columns are then solved
+ * together by the multi-RHS `trsm` (per-step barriers shared across right-hand
+ * sides). Thread-count invariant. NumPy equivalent:
+ * `X = np.linalg.solve(A, B)` (A SPD, B `n×nrhs`).
  *
  * @par Regularize + check (`REGULARIZE` / `CHECK` / `REG_DIAG`, all compile-out, default off)
  * `REGULARIZE` adds a shift to `A`'s diagonal before factoring — `rho·I`
@@ -151,11 +152,8 @@ __device__ void posv(uint32_t n, uint32_t nrhs, T *A, T *B, T rho = T(0), int *s
 {
     if constexpr (REGULARIZE) _posv_regularize<T, REG_DIAG>(n, A, rho);  // rho*I or rho*diag(A)
     potrf<T, CHECK>(n, A, s_fail);   // A -> L (lower); trailing __syncthreads
-    for (uint32_t c = 0; c < nrhs; c++) {
-        T *Bc = B + c * n;                        // column c (column-major)
-        trsv<T, true, false, false>(n, A, Bc);    // forward: L y = b
-        trsv<T, true, false, true>(n, A, Bc);     // back:    Lᵀ x = y
-    }
+    trsm<T>(n, nrhs, A, B);                                                        // forward: L Y = B
+    trsm<T, FillMode::Lower, Diag::NonUnit, /*TRANSPOSE=*/true>(n, nrhs, A, B);    // back:   Lᵀ X = Y
 }
 
 /**
@@ -199,9 +197,9 @@ __device__ void posv(T *A, T *B, T rho = T(0), int *s_fail = nullptr)
  * is overwritten with `X`.
  *
  * `B` (and `X`) is `n × nrhs` stored **column-major**: column `c` begins at
- * `B + c*n`. Each `trsv` self-syncs, so no barrier between columns is needed.
- * Thread-count invariant. SciPy equivalent:
- * `X = scipy.linalg.cho_solve((L, True), B)`.
+ * `B + c*n`. All columns are solved together by the multi-RHS `trsm` (per-step
+ * barriers shared across right-hand sides). Thread-count invariant. SciPy
+ * equivalent: `X = scipy.linalg.cho_solve((L, True), B)`.
  *
  * @tparam T     Scalar type.
  * @param n      Dimension (`L` is `n×n`, each column of `B` has length `n`).
@@ -212,11 +210,8 @@ __device__ void posv(T *A, T *B, T rho = T(0), int *s_fail = nullptr)
 template <typename T>
 __device__ void potrs(uint32_t n, uint32_t nrhs, const T *L, T *B)
 {
-    for (uint32_t c = 0; c < nrhs; c++) {
-        T *Bc = B + c * n;                        // column c (column-major)
-        trsv<T, true, false, false>(n, L, Bc);    // forward: L y = b
-        trsv<T, true, false, true>(n, L, Bc);     // back:    Lᵀ x = y
-    }
+    trsm<T>(n, nrhs, L, B);                                                        // forward: L Y = B
+    trsm<T, FillMode::Lower, Diag::NonUnit, /*TRANSPOSE=*/true>(n, nrhs, L, B);    // back:   Lᵀ X = Y
 }
 
 /**

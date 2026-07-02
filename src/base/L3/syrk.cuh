@@ -1,12 +1,12 @@
 #pragma once
 #include <cstdint>
+#include "../flags.cuh"   // FillMode (shared with trsv/trmv/trsm)
 
-// FillMode selects which triangle of the symmetric result C is written:
+// FillMode (see flags.cuh) selects which triangle of the symmetric result C is
+// written:
 //   Lower — only cells with row >= col
 //   Upper — only cells with row <= col
 //   Full  — both triangles (C is materialized as a full symmetric matrix)
-// (file-scope so it lands in `namespace glass` via the glass.cuh include trick).
-enum class FillMode : uint32_t { Lower = 0, Upper = 1, Full = 2 };
 
 // ─── helpers: is this (row,col) cell in the canonical (computed) triangle? ────
 // Lower/Full compute the lower triangle (row>=col); Upper computes row<=col.
