@@ -69,6 +69,16 @@ Cholesky
 
 .. doxygenfile:: src/base/L3/potrf.cuh
 
+LU with partial pivoting (getrf / getrs / gesv / laswp)
+-------------------------------------------------------
+
+The robustness path for general non-SPD systems: in-place pivoted LU
+(``getrf``, SciPy ``lu_factor``), the matching solves (``getrs`` /
+``gesv``, SciPy ``lu_solve`` / NumPy ``solve``), and the LAPACK-style
+row-interchange helper ``laswp``.
+
+.. doxygenfile:: src/base/L3/getrf.cuh
+
 Triangular solve (trsm)
 -----------------------
 
