@@ -15,6 +15,11 @@ pure-noise re-run reproduces the same tables. The legs:
                                   src/nvidia/tuning_table.cuh  (needs MATHDX_ROOT)
   reduced  bench_reduced.cu     → validates serial-vs-reduced crossover against
                                   suggested_use_reduced<>; rewrites REDUCED_SWEEP_RESULTS.md
+  blas2    bench_blas2.cu       → warp/block sweep of the ops the ladder misses
+                                  (syrk/syr2k/ldlt/ldltsv/inv/trmv/ger); reports picks
+                                  into BLAS2_SWEEP_RESULTS.md (no header table yet)
+  rect     bench_rect.cu        → warp/block sweep of rectangular gemv/gemm shapes;
+                                  reports picks into RECT_SWEEP_RESULTS.md (no table yet)
   figures  export_sweep_figures → docs _static/*.png ladders + sweep_winners.txt
 
 All ops are *measured and recorded*; a dispatch picker is regenerated only for
@@ -45,9 +50,11 @@ GLASS_DIR = BENCH_DIR.parent
 DEFAULTS  = GLASS_DIR / "glass-defaults.cuh"
 STATIC    = GLASS_DIR / "docs" / "source" / "_static"
 REDUCED_MD = BENCH_DIR / "REDUCED_SWEEP_RESULTS.md"
+BLAS2_MD   = BENCH_DIR / "BLAS2_SWEEP_RESULTS.md"
+RECT_MD    = BENCH_DIR / "RECT_SWEEP_RESULTS.md"
 CACHE_ROOT = BENCH_DIR / ".tune_cache"
 
-ALL_LEGS = ("ladder", "shapes", "reduced", "figures")
+ALL_LEGS = ("ladder", "shapes", "reduced", "blas2", "rect", "figures")
 
 
 def cache_dir(sms):
@@ -125,9 +132,11 @@ def build_mega_sweep(sms, mdx):
     return binp
 
 
-def run_mega_sweep(binp, quick):
+def run_mega_sweep(binp, quick, prefix="mega_sweep"):
+    """Run a ladder-style harness (mega/blas2/rect share the CLI + section
+    grammar) over the NPROB schedule x {f32,f64}; write <prefix>_<ts>.txt."""
     sched = _QUICK_SCHED if quick else _FULL_SCHED
-    out = [f"# mega sweep  {time.strftime('%c')}  (bench/tune.py)"]
+    out = [f"# {prefix}  {time.strftime('%c')}  (bench/tune.py)"]
     try:
         smi = subprocess.check_output(
             ["nvidia-smi", "--query-gpu=name,clocks.max.sm,clocks.sm,temperature.gpu",
@@ -144,7 +153,7 @@ def run_mega_sweep(binp, quick):
                                capture_output=True, cwd=BENCH_DIR)
             out.append(r.stdout)
             out.append("")
-    path = BENCH_DIR / f"mega_sweep_{time.strftime('%Y%m%d_%H%M')}.txt"
+    path = BENCH_DIR / f"{prefix}_{time.strftime('%Y%m%d_%H%M')}.txt"
     path.write_text("\n".join(out))
     print(f"==> wrote {path.relative_to(GLASS_DIR)}")
     return path
@@ -302,6 +311,102 @@ def splice_reduced_md(existing, block):
     return existing.rstrip() + "\n\n" + block + "\n"
 
 
+# ─── blas2 + rect legs: warp/block picks, reported (no header table yet) ─────
+# These legs measure ops/shapes with no shipped defaults table: blas2 covers the
+# ladder's blind-spot ops (syrk/syr2k/ldlt/ldltsv/inv/trmv/ger; no nvidia
+# counterparts, so 2-way), rect covers rectangular gemv/gemm (nvidia skipped —
+# per-shape cuBLASDx decisions live in the `shapes` leg). Verdicts route through
+# tune_pick just like the tables; the results land in a marker-delimited block
+# of BLAS2_SWEEP_RESULTS.md / RECT_SWEEP_RESULTS.md until the defaults-table
+# extension is designed.
+
+def _build_simt_harness(label, cu_name, sms):
+    """Compile a no-MathDx warp/block harness with the mega sweep's opt flags."""
+    flags = ["nvcc", "-std=c++17", f"-arch=sm_{sms//10}", "-O3",
+             "--expt-relaxed-constexpr", "-Xptxas", "-O1", "-I..", "-I../src",
+             cu_name]
+    binp, status = cached_build(label, cu_name, flags, sms)
+    if status == "fail":
+        sys.exit(f"ERROR: {cu_name} compile failed.")
+    print(f"  {cu_name.removesuffix('.cu')}: {status} ({binp.name})")
+    return binp
+
+
+def build_blas2(sms):
+    return _build_simt_harness("blas2", "bench_blas2.cu", sms)
+
+
+def build_rect(sms):
+    return _build_simt_harness("rect", "bench_rect.cu", sms)
+
+
+def _shape_str(shape):
+    return f"N={shape}" if isinstance(shape, int) else "x".join(str(d) for d in shape)
+
+
+# Row order for the report tables: harness op order, then numeric shape, dtype.
+_OP_ORDER = {op: i for i, op in enumerate(tp.BLAS2_OPS + ("gemv", "gemm"))}
+
+
+def _cell_key(key):
+    dt, op, shape = key
+    return (_OP_ORDER.get(op, len(_OP_ORDER)),
+            (shape,) if isinstance(shape, int) else tuple(shape), dt)
+
+
+def gen_pick_block(cells, margin, src, block_only_note=""):
+    """Marker-delimited measured-run block for the blas2/rect legs.
+
+    ``cells``: ``(dtype, op, shape) -> {block[, warp]}`` ns/problem. warp and
+    block are both dependency-free, so :func:`tune_pick.pick` resolves each cell
+    to the cheapest impl; the verdict note records the gap vs the ±margin band.
+    """
+    warp_wins = sum(1 for t in cells.values()
+                    if tp.pick(t, margin) == "warp")
+    L = [_RED_BEGIN,
+         "## Latest measured run (auto-refreshed by `bench/tune.py`)", "",
+         f"_Source: `{src}` · NPROB=8192 ns/problem · margin ±{margin*100:.0f}% "
+         f"(warp/block are both dependency-free; pick = cheapest, note flags "
+         f"sub-margin gaps) · warp picked in {warp_wins} of {len(cells)} cells._", ""]
+    if block_only_note:
+        L += [block_only_note, ""]
+    L += ["| op | shape | dtype | block ns | warp ns | pick | note |",
+          "|----|-------|-------|----------|---------|------|------|"]
+    for (dt, op, shape) in sorted(cells, key=_cell_key):
+        t = cells[(dt, op, shape)]
+        win, note = tp.verdict(t, margin)
+        warp_s = f"{t['warp']:.2f}" if "warp" in t else "—"
+        L.append(f"| {op} | {_shape_str(shape)} | {dt} | {t['block']:.2f} | "
+                 f"{warp_s} | **{win}** | {note} |")
+    L += ["", _RED_END]
+    return "\n".join(L)
+
+
+def report_pick_leg(name, txt, txt_name, md_path, margin, parse, dry_run,
+                    changed, block_only_note=""):
+    """Parse a blas2/rect sweep, generate the pick block, splice into md_path."""
+    cells = parse(txt)
+    if not cells:
+        print(f"  ⚠️ no NPROB=8192 rows parsed from {txt_name}; nothing written.")
+        return
+    print(f"  {len(cells)} (dtype,op,shape) cells parsed")
+    block = gen_pick_block(cells, margin, txt_name, block_only_note)
+    existing = md_path.read_text() if md_path.exists() else f"# {name} sweep — measured results\n"
+    md = splice_reduced_md(existing, block)
+    if dry_run:
+        changed[name] = show_diff(md_path, md, md_path.name)
+    else:
+        md_path.write_text(md)
+        print(f"  wrote {md_path.relative_to(GLASS_DIR)}")
+
+
+_BLAS2_NOTE = ("inv/trmv/ger are BLOCK-ONLY (no `glass::warp::` variant); "
+               "none of these ops has a `glass::nvidia::` counterpart.")
+_RECT_NOTE = ("nvidia leg skipped for rectangular shapes (needs new per-shape "
+              "DEFINE_NVIDIA_* machinery; cuBLASDx-vs-SIMT per (M,N,K) lives in "
+              "the `shapes` leg).")
+
+
 # ─── diff helper ──────────────────────────────────────────────────────────────
 
 def show_diff(path, new_text, label):
@@ -346,13 +451,18 @@ def main():
                    help="skip ladder build/run; regenerate from this mega_sweep .txt")
     p.add_argument("--from-reduced", metavar="TXT",
                    help="skip reduced build/run; analyze from this bench_reduced .txt")
+    p.add_argument("--from-blas2", metavar="TXT",
+                   help="skip blas2 build/run; report from this bench_blas2 sweep .txt")
+    p.add_argument("--from-rect", metavar="TXT",
+                   help="skip rect build/run; report from this bench_rect sweep .txt")
     args = p.parse_args()
 
     legs = [l.strip() for l in args.legs.split(",") if l.strip()]
     bad = [l for l in legs if l not in ALL_LEGS]
     if bad:
         sys.exit(f"unknown leg(s) {bad}; choose from {ALL_LEGS}")
-    offline = bool(args.from_ladder or args.from_reduced)
+    offline = bool(args.from_ladder or args.from_reduced
+                   or args.from_blas2 or args.from_rect)
     sms = None if (args.sm == "auto" and offline) else (
         detect_sm() if args.sm == "auto" else int(args.sm))
     mdx = mathdx_root()
@@ -383,6 +493,12 @@ def main():
         if "reduced" in legs:
             print("── prebuild: reduced ─────────────────────────────────────")
             build_reduced(sms)
+        if "blas2" in legs:
+            print("── prebuild: blas2 ───────────────────────────────────────")
+            build_blas2(sms)
+        if "rect" in legs:
+            print("── prebuild: rect ────────────────────────────────────────")
+            build_rect(sms)
         if "figures" in legs:
             print("── prebuild: figures ─────────────────────────────────────")
             print("  [n/a] figures is pure Python (matplotlib) — nothing to compile.")
@@ -452,6 +568,28 @@ def main():
             else:
                 REDUCED_MD.write_text(md)
                 print(f"  wrote {REDUCED_MD.relative_to(GLASS_DIR)}")
+
+    # ── blas2 / rect (warp-vs-block picks, reported; no header table yet) ──
+    for leg, from_arg, builder, prefix, md_path, parse, note in (
+            ("blas2", args.from_blas2, build_blas2, "blas2_sweep",
+             BLAS2_MD, tp.parse_blas2, _BLAS2_NOTE),
+            ("rect", args.from_rect, build_rect, "rect_sweep",
+             RECT_MD, tp.parse_rect, _RECT_NOTE)):
+        if leg not in legs:
+            continue
+        print(f"── {leg} (warp vs block, ns/problem) ─────────────────────")
+        if from_arg:
+            txt_path = pathlib.Path(from_arg)
+            txt = txt_path.read_text()
+        elif sms is None:
+            print(f"  [skip] {leg} needs a GPU or --from-{leg}.")
+            continue
+        else:
+            binp = builder(sms)
+            txt_path = run_mega_sweep(binp, args.quick, prefix)
+            txt = txt_path.read_text()
+        report_pick_leg(leg, txt, txt_path.name, md_path, args.margin,
+                        parse, args.dry_run, changed, note)
 
     # ── figures ──
     if "figures" in legs:
