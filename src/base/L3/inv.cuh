@@ -21,8 +21,10 @@
 // s_scratch: (2*dimA+1)*sizeof(T) bytes.
 // Shared body: Gauss-Jordan inversion; barrier policy supplies rank/size + the
 // two per-pivot syncs, shared by the glass:: and cgrps:: surfaces.
-template <typename Bar, typename T>
-__device__ void inv_impl(Bar bar, uint32_t dimA, T *A, T *s_scratch)
+// SizeT is deduced: uint32_t from the runtime overload, ct_size<N> from the
+// compile-time overload (constant-folds the trip counts and the %/ indexing).
+template <typename Bar, typename T, typename SizeT>
+__device__ void inv_impl(Bar bar, SizeT dimA, T *A, T *s_scratch)
 {
     uint32_t rank = bar.rank(), size = bar.size();
     for (unsigned pivRC = 0; pivRC < dimA; pivRC++) {
@@ -63,7 +65,7 @@ __device__ void inv(uint32_t dimA, T *A, T *s_scratch)
 template <typename T, uint32_t N>
 __device__ void inv(T *A, T *s_scratch)
 {
-    inv<T>(N, A, s_scratch);
+    inv_impl<BlockBarrier, T>(BlockBarrier{}, ct_size<N>{}, A, s_scratch);
 }
 
 /**
@@ -147,8 +149,10 @@ __host__ __device__ constexpr std::size_t inv_pivoted_scratch_bytes(uint32_t dim
  *                on return its right half holds `A^-1`.
  * @param s_scratch  Shared scratch of `(3*dimA + 1) * sizeof(T)` bytes.
  */
-template <typename T>
-__device__ void inv_pivoted(uint32_t dimA, T *A, T *s_scratch)
+// Shared body (runtime + compile-time overloads): SizeT deduced — uint32_t or
+// ct_size<N> (constant-folds the trip counts and the %/ indexing).
+template <typename T, typename SizeT>
+__device__ void inv_pivoted_impl(SizeT dimA, T *A, T *s_scratch)
 {
     uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
     uint32_t size = blockDim.x * blockDim.y * blockDim.z;
@@ -207,6 +211,12 @@ __device__ void inv_pivoted(uint32_t dimA, T *A, T *s_scratch)
     }
 }
 
+template <typename T>
+__device__ void inv_pivoted(uint32_t dimA, T *A, T *s_scratch)
+{
+    inv_pivoted_impl<T>(dimA, A, s_scratch);
+}
+
 /**
  * @brief Compile-time-size ROBUST (partial-pivoting) matrix inverse (`[A | I]`).
  *
@@ -224,7 +234,7 @@ __device__ void inv_pivoted(uint32_t dimA, T *A, T *s_scratch)
 template <typename T, uint32_t N>
 __device__ void inv_pivoted(T *A, T *s_scratch)
 {
-    inv_pivoted<T>(N, A, s_scratch);
+    inv_pivoted_impl<T>(ct_size<N>{}, A, s_scratch);
 }
 
 /**
@@ -408,8 +418,10 @@ __host__ __device__ constexpr std::size_t inv_dense_scratch_bytes(uint32_t dimA)
  * @param Ainv    Workspace column-major dimA x dimA; on return also holds `A^{-1}`.
  * @param s_scratch  Shared scratch of `3 * dimA * sizeof(T)` bytes.
  */
-template <typename T>
-__device__ void inv_dense(uint32_t dimA, T *A, T *Ainv, T *s_scratch)
+// Shared body (runtime + compile-time overloads): SizeT deduced — uint32_t or
+// ct_size<N> (constant-folds the trip counts and the %/ indexing).
+template <typename T, typename SizeT>
+__device__ void inv_dense_impl(SizeT dimA, T *A, T *Ainv, T *s_scratch)
 {
     uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
     uint32_t size = blockDim.x * blockDim.y * blockDim.z;
@@ -447,6 +459,12 @@ __device__ void inv_dense(uint32_t dimA, T *A, T *Ainv, T *s_scratch)
     }
 }
 
+template <typename T>
+__device__ void inv_dense(uint32_t dimA, T *A, T *Ainv, T *s_scratch)
+{
+    inv_dense_impl<T>(dimA, A, Ainv, s_scratch);
+}
+
 /**
  * @brief Compile-time-size dense in-place matrix inverse (dual-update Gauss-Jordan).
  *
@@ -463,5 +481,5 @@ __device__ void inv_dense(uint32_t dimA, T *A, T *Ainv, T *s_scratch)
 template <typename T, uint32_t N>
 __device__ void inv_dense(T *A, T *Ainv, T *s_scratch)
 {
-    inv_dense<T>(N, A, Ainv, s_scratch);
+    inv_dense_impl<T>(ct_size<N>{}, A, Ainv, s_scratch);
 }

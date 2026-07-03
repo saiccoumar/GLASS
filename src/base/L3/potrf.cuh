@@ -27,8 +27,10 @@
 // Shared body: in-place lower Cholesky; barrier policy supplies rank/size + the
 // two per-row syncs, so the glass:: and cgrps:: surfaces share this one body.
 // (No separable TRAILING_SYNC: the algorithm's final step is itself a barrier.)
-template <typename Bar, typename T, bool CHECK = false>
-__device__ void potrf_impl(Bar bar, uint32_t n, T *s_A, int *s_fail)
+// SizeT is deduced: uint32_t from the runtime overload, ct_size<N> from the
+// compile-time overload (constant-folds the trip counts / indexing).
+template <typename Bar, typename T, bool CHECK = false, typename SizeT>
+__device__ void potrf_impl(Bar bar, SizeT n, T *s_A, int *s_fail)
 {
     uint32_t rank = bar.rank(), size = bar.size();
     if constexpr (CHECK) { if (rank == 0 && s_fail) *s_fail = 0; }   // only rank 0 writes s_fail
@@ -176,7 +178,7 @@ __device__ void potrf(uint32_t dimA, uint32_t dimB, uint32_t dimC, uint32_t MAX_
 template <typename T, uint32_t N, bool CHECK = false>
 __device__ void potrf(T *s_A, int *s_fail = nullptr)
 {
-    potrf<T, CHECK>(N, s_A, s_fail);
+    potrf_impl<BlockBarrier, T, CHECK>(BlockBarrier{}, ct_size<N>{}, s_A, s_fail);
 }
 
 namespace warp {

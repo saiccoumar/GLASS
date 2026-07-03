@@ -19,9 +19,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Shared body: barrier policy supplies rank/size + the per-step syncs, shared
-// by glass:: and cgrps::.
-template <typename Bar, typename T, FillMode FILL, Diag DIAG, bool TRANSPOSE>
-__device__ void trsm_impl(Bar bar, uint32_t n, uint32_t nrhs, const T *A, T *B)
+// by glass:: and cgrps::. SizeT/SizeU are deduced: uint32_t from the runtime
+// overload, ct_size<N>/ct_size<NRHS> from the compile-time overload
+// (constant-folds the trip counts and the flat-index %/ by `rows`).
+template <typename Bar, typename T, FillMode FILL, Diag DIAG, bool TRANSPOSE,
+          typename SizeT, typename SizeU>
+__device__ void trsm_impl(Bar bar, SizeT n, SizeU nrhs, const T *A, T *B)
 {
     static_assert(FILL != FillMode::Full, "trsm: FILL must name a triangle (Lower or Upper)");
     constexpr bool LOWER   = (FILL == FillMode::Lower);
@@ -96,7 +99,7 @@ template <typename T, uint32_t N, uint32_t NRHS,
           FillMode FILL = FillMode::Lower, Diag DIAG = Diag::NonUnit, bool TRANSPOSE = false>
 __device__ void trsm(const T *A, T *B)
 {
-    trsm_impl<BlockBarrier, T, FILL, DIAG, TRANSPOSE>(BlockBarrier{}, N, NRHS, A, B);
+    trsm_impl<BlockBarrier, T, FILL, DIAG, TRANSPOSE>(BlockBarrier{}, ct_size<N>{}, ct_size<NRHS>{}, A, B);
 }
 
 namespace warp {
@@ -230,8 +233,8 @@ namespace warp {
      * (Marquardt), `REG_DIAG=true` adds `rho·diag(A)` (Levenberg). Trailing
      * `__syncwarp()` so the shifted A is warp-visible before factoring. Internal.
      */
-    template <typename T, bool REG_DIAG = false>
-    __device__ void _posv_regularize(uint32_t n, T *A, T rho)
+    template <typename T, bool REG_DIAG = false, typename SizeT>
+    __device__ void _posv_regularize(SizeT n, T *A, T rho)
     {
         uint32_t lane = (threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y) & 31;
         for (uint32_t i = lane; i < n; i += 32) {
@@ -272,7 +275,10 @@ namespace warp {
               bool REGULARIZE = false, bool CHECK = false, bool REG_DIAG = false>
     __device__ void posv(T *A, T *B, T rho = T(0), int *s_fail = nullptr)
     {
-        if constexpr (REGULARIZE) _posv_regularize<T, REG_DIAG>(N, A, rho);  // rho*I or rho*diag(A)
+        // Qualified: ct_size's home namespace is glass, so an unqualified call
+        // would ADL-pull the block-scoped glass::_posv_regularize into the
+        // overload set and be ambiguous with this warp-scoped one.
+        if constexpr (REGULARIZE) warp::_posv_regularize<T, REG_DIAG>(ct_size<N>{}, A, rho);  // rho*I or rho*diag(A)
         potrf<T, N, CHECK>(A, s_fail);
         trsm<T, N, NRHS>(A, B);                                                        // forward: L Y = B
         trsm<T, N, NRHS, FillMode::Lower, Diag::NonUnit, /*TRANSPOSE=*/true>(A, B);    // back:   Lᵀ X = Y

@@ -3,6 +3,27 @@
 #include "../flags.cuh"   // FillMode / Diag
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ct_size — compile-time size carrier for the factor/solve `*_impl` bodies.
+//
+// The shared impls take their dimension through a deduced `SizeT` template
+// parameter instead of a hard `uint32_t`. The runtime public overloads pass a
+// plain `uint32_t` (unchanged behavior); the compile-time-size overloads pass
+// `ct_size<N>{}`, whose constexpr conversion makes every use of the dimension a
+// compile-time constant after inlining — so nvcc unrolls the loops and
+// strength-reduces the `%`/`/` indexing with NO body duplication (the same
+// effect `gemm_impl_ct` gets from its dedicated body). A self-made carrier
+// rather than std::integral_constant so no system header lands inside
+// `namespace glass` (this file is included inside the namespace by glass.cuh).
+// Defined here because trsv.cuh is the first of the factor/solve headers pulled
+// in by glass.cuh (before inv/potrf/trsm/ldlt/posv), the same include-order
+// convention those headers already rely on for their cross-file calls.
+// ─────────────────────────────────────────────────────────────────────────────
+template <uint32_t V>
+struct ct_size {
+    __host__ __device__ constexpr operator uint32_t() const { return V; }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // trsv — triangular solve op(A) x = b, in place (BLAS TRSV).
 // trmv — triangular matrix-vector product y = op(A) x (BLAS TRMV).
 //
@@ -25,8 +46,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 // core impl: explicit rank/size + flags. Solves op(A) x = b in place.
-template <typename T, FillMode FILL, Diag DIAG, bool TRANSPOSE>
-__device__ void trsv_impl(uint32_t rank, uint32_t size, uint32_t n, const T* A, T* x)
+// SizeT is deduced: uint32_t from the runtime overload, ct_size<N> from the
+// compile-time overload (constant-folds the trip counts / indexing).
+template <typename T, FillMode FILL, Diag DIAG, bool TRANSPOSE, typename SizeT>
+__device__ void trsv_impl(uint32_t rank, uint32_t size, SizeT n, const T* A, T* x)
 {
     static_assert(FILL != FillMode::Full, "trsv: FILL must name a triangle (Lower or Upper)");
     constexpr bool LOWER = (FILL == FillMode::Lower);
@@ -108,16 +131,16 @@ __device__ void trsv(const T* A, T* x)
 {
     uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
     uint32_t size = blockDim.x * blockDim.y * blockDim.z;
-    trsv_impl<T, FILL, DIAG, TRANSPOSE>(rank, size, N, A, x);
+    trsv_impl<T, FILL, DIAG, TRANSPOSE>(rank, size, ct_size<N>{}, A, x);
 }
 
 // ─── trmv: out-of-place core ──────────────────────────────────────────────────
 
 // core impl: explicit rank/size + flags. Computes y = op(A) x out of place.
 // Each thread owns disjoint outputs y[i] and only reads the intact x — no
-// interior barrier required.
-template <typename T, FillMode FILL, Diag DIAG, bool TRANSPOSE>
-__device__ void trmv_impl(uint32_t rank, uint32_t size, uint32_t n,
+// interior barrier required. SizeT deduced (uint32_t or ct_size<N>, see trsv_impl).
+template <typename T, FillMode FILL, Diag DIAG, bool TRANSPOSE, typename SizeT>
+__device__ void trmv_impl(uint32_t rank, uint32_t size, SizeT n,
                           const T* A, const T* x, T* y)
 {
     static_assert(FILL != FillMode::Full, "trmv: FILL must name a triangle (Lower or Upper)");
@@ -191,7 +214,7 @@ __device__ void trmv(const T* A, const T* x, T* y)
 {
     uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
     uint32_t size = blockDim.x * blockDim.y * blockDim.z;
-    trmv_impl<T, FILL, DIAG, TRANSPOSE>(rank, size, N, A, x, y);
+    trmv_impl<T, FILL, DIAG, TRANSPOSE>(rank, size, ct_size<N>{}, A, x, y);
 }
 
 // ─── trmv: in-place wrapper (needs scratch) ──────────────────────────────────
@@ -257,7 +280,7 @@ __device__ void trmv(const T* A, T* x, T* scratch)
 {
     uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
     uint32_t size = blockDim.x * blockDim.y * blockDim.z;
-    trmv_impl<T, FILL, DIAG, TRANSPOSE>(rank, size, N, A, x, scratch);
+    trmv_impl<T, FILL, DIAG, TRANSPOSE>(rank, size, ct_size<N>{}, A, x, scratch);
     __syncthreads();
     for (uint32_t i = rank; i < N; i += size) x[i] = scratch[i];
     __syncthreads();
