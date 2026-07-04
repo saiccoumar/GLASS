@@ -12,7 +12,7 @@ standard BLAS convention (``C`` is M×N, contraction K) with ``TRANSPOSE_A`` /
 row-major operand is just a transpose, so per-operand row-major flags were
 removed; see :doc:`../user_guide/concepts/backend_dispatch` for how the dispatch
 GEMM chooses a path. Single-warp (``glass::warp::``) variants of ``gemm``,
-``potrf``, and ``trsm`` render inline beside their block-scoped
+``potrf``, ``trsm``, and ``inv`` render inline beside their block-scoped
 sibling; see :doc:`warp`.
 
 gemm
@@ -88,6 +88,18 @@ Symmetric rank-k / rank-2k update (syrk / syr2k)
 ------------------------------------------------
 
 .. doxygenfile:: src/base/L3/syrk.cuh
+
+Symmetric / triangular matrix-matrix multiply (symm / trmm)
+-----------------------------------------------------------
+
+Left-side products against a triangle-stored matrix: ``symm``
+(``C = alpha*A_sym*B + beta*C``, BLAS SYMM — only the ``FILL`` triangle of the
+symmetric ``A`` is stored, the other is read mirrored) and ``trmm``
+(``C = alpha*op(A_tri)*B``, BLAS TRMM but deliberately OUT-of-place into a
+separate ``C`` so the flat one-output-per-thread loop stays race-free;
+``FillMode`` / ``Diag`` / ``TRANSPOSE`` flags as in ``trsv``/``trsm``).
+
+.. doxygenfile:: src/base/L3/symm.cuh
 
 LDLᵀ factorization (ldlt / ldlt_solve)
 --------------------------------------

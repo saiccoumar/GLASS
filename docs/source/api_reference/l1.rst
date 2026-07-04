@@ -31,6 +31,15 @@ swap
 
 .. doxygenfile:: src/base/L1/swap.cuh
 
+rot / rotg (Givens plane rotation)
+----------------------------------
+
+Apply (``rot``, BLAS SROT/DROT: ``x = c*x + s*y``, ``y = c*y - s*x``; block +
+``glass::warp::``) and generate (``rotg``, BLAS SROTG/DROTG semantics, the
+overflow-safe scaled form; a ``__host__ __device__`` scalar helper).
+
+.. doxygenfile:: src/base/L1/rot.cuh
+
 dot
 ---
 

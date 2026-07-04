@@ -161,6 +161,9 @@ def _hash_sources(cu_path: pathlib.Path) -> str:
               GLASS_DIR / "src" / "base" / "L1" / "nrm1_diff.cuh",
               GLASS_DIR / "src" / "base" / "L1" / "symmetrize.cuh",
               GLASS_DIR / "test" / "cuda" / "test_symmetrize.cu",
+              GLASS_DIR / "src" / "base" / "L1" / "rot.cuh",
+              GLASS_DIR / "src" / "base" / "L3" / "symm.cuh",
+              GLASS_DIR / "test" / "cuda" / "test_symm_rot.cu",
               GLASS_DIR / "src" / "base" / "L1" / "axpy_strided.cuh",
               GLASS_DIR / "src" / "base" / "L1" / "copy_strided.cuh",
               GLASS_DIR / "test" / "cuda" / "test_l1_round2.cu",
@@ -289,6 +292,7 @@ def bins(tmp_path_factory):
         "l1_round2": compile_binary("test_l1_round2", build_dir, CUDA_ARCH),
         "block_access": compile_binary("test_block_access", build_dir, CUDA_ARCH),
         "symmetrize": compile_binary("test_symmetrize", build_dir, CUDA_ARCH),
+        "symm_rot": compile_binary("test_symm_rot", build_dir, CUDA_ARCH),
         "syev": compile_binary("test_syev", build_dir, CUDA_ARCH),
     }
     # test_l3_nvidia.cu includes glass-nvidia.cuh and exercises the SIMT-only

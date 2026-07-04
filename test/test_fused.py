@@ -1,8 +1,14 @@
-"""Fused K-way inv / potrf tests.
+"""Fused K-way inv / potrf tests, plus the single-warp glass::warp::inv.
 
 Dedicated runner (test/cuda/test_fused.cu) to avoid contention on test_l3.
 Each (K, dims) case is checked per-matrix against a NumPy oracle and swept over
 several thread counts (including non-multiples of 32) for thread-invariance.
+
+warp::inv ("winv") launches ONE block of dim3(32, W) with warp w inverting its
+OWN matrix from its own shared-scratch span — the GATO/MPCGPU warp-packed
+Schur-inversion use-case. Each result is checked against np.linalg.inv AND
+byte-compared against the single-matrix block glass::inv ("binv") at exactly 32
+threads: the warp body mirrors inv_impl's phases and arithmetic bit-for-bit.
 """
 
 import os
@@ -84,6 +90,49 @@ def test_fused_inv(fused_bin, K, dims, threads):
         ref = np.linalg.inv(M).astype(np.float32)
         assert np.allclose(gpu, ref, rtol=RTOL, atol=ATOL), \
             f"inv mismatch K={K} dims={dims} d={d} threads={threads}"
+
+
+# ─── warp::inv — warp-packed, one matrix per warp ──────────────────────────────
+
+# (W, d): W warps in one block, all matrices the same size d (the packing
+# use-case: many identical small Schur blocks). d must be in the runner's
+# compile-time set {4, 8, 12}.
+WARP_CASES = [
+    (1, 4),
+    (4, 4),
+    (2, 8),
+    (4, 12),
+]
+
+
+@pytest.mark.parametrize("W,d", WARP_CASES)
+def test_warp_inv(fused_bin, W, d):
+    """Each warp inverts a DIFFERENT matrix: correct vs np.linalg.inv, and
+    byte-identical to the block glass::inv run at exactly 32 threads (the warp
+    port mirrors inv_impl's two-phase arithmetic bit-for-bit)."""
+    mats = [make_spd(d, rng=RNG) for _ in range(W)]
+    inputs = [_aug(M, d) for M in mats]
+    res = _run(fused_bin, "winv", 32, [d] * W, inputs)
+    assert len(res) == W
+    for M, aug_in, r in zip(mats, inputs, res):
+        gpu = r.reshape(d, d, order="F")
+        ref = np.linalg.inv(M).astype(np.float32)
+        assert np.allclose(gpu, ref, rtol=RTOL, atol=ATOL), \
+            f"warp::inv mismatch vs numpy W={W} d={d}"
+        block = _run(fused_bin, "binv", 32, [d], [aug_in])[0].reshape(d, d, order="F")
+        assert np.array_equal(gpu, block), \
+            f"warp::inv != block inv@32 threads (W={W}, d={d})"
+
+
+@pytest.mark.parametrize("threads", THREAD_SWEEP)
+def test_block_inv_baseline(fused_bin, threads):
+    """The binv baseline op itself is thread-count invariant and correct."""
+    d = 8
+    M = make_spd(d, rng=RNG)
+    outs = [_run(fused_bin, "binv", t, [d], [_aug(M, d)])[0] for t in (threads, 256)]
+    ref = np.linalg.inv(M).astype(np.float32)
+    assert np.allclose(outs[0].reshape(d, d, order="F"), ref, rtol=RTOL, atol=ATOL)
+    assert np.array_equal(outs[0], outs[1]), f"binv non-invariant at {threads}"
 
 
 @pytest.mark.parametrize("K,dims", CASES)
