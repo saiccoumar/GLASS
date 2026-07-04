@@ -99,6 +99,18 @@ SPD solve (posv / potrs)
 
 .. doxygenfile:: src/base/L3/posv.cuh
 
+Symmetric eigenvalues (syev / eig_clamp)
+----------------------------------------
+
+Small-matrix symmetric eigendecomposition via cyclic Jacobi (``syev``,
+NumPy ``np.linalg.eigh``) and the eigenvalue-clamping consumer op
+(``eig_clamp``: decompose, floor the eigenvalues at ``eps``, reconstruct
+``V diag(max(W, eps)) Vᵀ`` in place) — the device-side replacement for a
+host ``Eigen::SelfAdjointEigenSolver`` round-trip when regularizing a
+Hessian mid-solve. Designed for n ≤ 32.
+
+.. doxygenfile:: src/base/L3/syev.cuh
+
 Cooperative-groups variants (``glass::cgrps::``)
 ------------------------------------------------
 
