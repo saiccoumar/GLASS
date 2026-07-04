@@ -20,6 +20,10 @@ pure-noise re-run reproduces the same tables. The legs:
                                   into BLAS2_SWEEP_RESULTS.md (no header table yet)
   rect     bench_rect.cu        → warp/block sweep of rectangular gemv/gemm shapes;
                                   reports picks into RECT_SWEEP_RESULTS.md (no table yet)
+  solvers  bench_solvers.cu     → solver characterization (bdsv-vs-pcg crossover,
+                                  gesv/posv/inv-solve on SPD, syev/eig_clamp) into
+                                  SOLVERS_SWEEP_RESULTS.md — measured, never picked
+                                  (the bdsv/pcg choice is conditioning-dependent)
   figures  export_sweep_figures → docs _static/*.png ladders + sweep_winners.txt
 
 All ops are *measured and recorded*; a dispatch picker is regenerated only for
@@ -52,9 +56,10 @@ STATIC    = GLASS_DIR / "docs" / "source" / "_static"
 REDUCED_MD = BENCH_DIR / "REDUCED_SWEEP_RESULTS.md"
 BLAS2_MD   = BENCH_DIR / "BLAS2_SWEEP_RESULTS.md"
 RECT_MD    = BENCH_DIR / "RECT_SWEEP_RESULTS.md"
+SOLVERS_MD = BENCH_DIR / "SOLVERS_SWEEP_RESULTS.md"
 CACHE_ROOT = BENCH_DIR / ".tune_cache"
 
-ALL_LEGS = ("ladder", "shapes", "reduced", "blas2", "rect", "figures")
+ALL_LEGS = ("ladder", "shapes", "reduced", "blas2", "rect", "solvers", "figures")
 
 
 def cache_dir(sms):
@@ -132,10 +137,13 @@ def build_mega_sweep(sms, mdx):
     return binp
 
 
-def run_mega_sweep(binp, quick, prefix="mega_sweep"):
-    """Run a ladder-style harness (mega/blas2/rect share the CLI + section
-    grammar) over the NPROB schedule x {f32,f64}; write <prefix>_<ts>.txt."""
-    sched = _QUICK_SCHED if quick else _FULL_SCHED
+def run_mega_sweep(binp, quick, prefix="mega_sweep", sched=None):
+    """Run a ladder-style harness (mega/blas2/rect/solvers share the CLI +
+    section grammar) over the NPROB schedule x {f32,f64}; write
+    <prefix>_<ts>.txt. ``sched`` overrides the NPROB/reps schedule (the solvers
+    leg times per-launch with restores, so its reps budget is much smaller)."""
+    if sched is None:
+        sched = _QUICK_SCHED if quick else _FULL_SCHED
     out = [f"# {prefix}  {time.strftime('%c')}  (bench/tune.py)"]
     try:
         smi = subprocess.check_output(
@@ -147,7 +155,7 @@ def run_mega_sweep(binp, quick, prefix="mega_sweep"):
     out.append("")
     for nprob, reps in sched:
         for dt in ("f32", "f64"):
-            print(f"  -> mega_sweep NPROB={nprob} reps={reps} {dt}")
+            print(f"  -> {prefix} NPROB={nprob} reps={reps} {dt}")
             out.append(f"################ NPROB={nprob}  reps={reps}  dtype={dt} ################")
             r = subprocess.run([str(binp), nprob, reps, dt], text=True,
                                capture_output=True, cwd=BENCH_DIR)
@@ -340,6 +348,10 @@ def build_rect(sms):
     return _build_simt_harness("rect", "bench_rect.cu", sms)
 
 
+def build_solvers(sms):
+    return _build_simt_harness("solvers", "bench_solvers.cu", sms)
+
+
 def _shape_str(shape):
     return f"N={shape}" if isinstance(shape, int) else "x".join(str(d) for d in shape)
 
@@ -407,6 +419,113 @@ _RECT_NOTE = ("nvidia leg skipped for rectangular shapes (needs new per-shape "
               "the `shapes` leg).")
 
 
+# ─── solvers leg: characterization only (measured + reported, NEVER picked) ──
+# bdsv and pcg ARE two impls of the same block-tridiagonal SPD solve, but the
+# right choice is problem-dependent (pcg's cost scales with the iteration count,
+# i.e. with conditioning; bdsv is exact in one serial-over-knots sweep) — so this
+# leg records the measured crossover on the harness's well-conditioned test
+# system instead of regenerating any dispatch table. gesv/posv/inv-solve and
+# syev/eig_clamp rows are pure characterization (what does the robustness /
+# anti-pattern path cost where Cholesky suffices).
+
+# The solvers harness restores mutated state between reps (untimed), so each rep
+# is a full restore+launch round-trip — budget far fewer reps than the ladder.
+_SOLVERS_SCHED = [("8192", "50")]
+
+_SLV_HDR_RE = re.compile(r"NPROB=(\d+).*dtype=(f32|f64)")
+_SLV_A_RE = re.compile(
+    r"^bdsv_pcg\s+BS=(\d+)\s+KP=(\d+)\b.*?it=(\d+)\s*\|\|\s*"
+    r"bdsv tb\d+=([\d.]+)\s+pcg tb\d+=([\d.]+)")
+_SLV_B_RE = re.compile(
+    r"^spdsv\s+N=(\d+)\b.*\|\|\s*gesv=([\d.]+)\s+posv=([\d.]+)\s+invsv=([\d.]+)")
+_SLV_C_RE = re.compile(r"^(syev|eig_clamp)\s+N=(\d+)\b.*\|\|\s*best tb\d+=([\d.]+)")
+
+
+def parse_solvers(text, nprob=8192):
+    """Parse a bench_solvers sweep at ``nprob`` into three keyed dicts:
+
+    ``bdsv_pcg``: ``(dtype, BS, KP) -> {bdsv, pcg, iters}`` (best-TB ns/problem
+    from the ``||`` summary + pcg's converged iteration count);
+    ``spdsv``:    ``(dtype, N) -> {gesv, posv, invsv}``;
+    ``eig``:      ``(dtype, N) -> {syev, eig_clamp}``.
+    """
+    data = {"bdsv_pcg": {}, "spdsv": {}, "eig": {}}
+    dtype, cur = None, None
+    for line in text.splitlines():
+        if line.startswith("####"):
+            m = _SLV_HDR_RE.search(line)
+            if m:
+                cur, dtype = int(m.group(1)), m.group(2)
+            continue
+        if cur != nprob:
+            continue
+        s = line.strip()
+        m = _SLV_A_RE.match(s)
+        if m:
+            data["bdsv_pcg"][(dtype, int(m.group(1)), int(m.group(2)))] = dict(
+                iters=int(m.group(3)), bdsv=float(m.group(4)), pcg=float(m.group(5)))
+            continue
+        m = _SLV_B_RE.match(s)
+        if m:
+            data["spdsv"][(dtype, int(m.group(1)))] = dict(
+                gesv=float(m.group(2)), posv=float(m.group(3)), invsv=float(m.group(4)))
+            continue
+        m = _SLV_C_RE.match(s)
+        if m:
+            data["eig"].setdefault((dtype, int(m.group(2))), {})[m.group(1)] = \
+                float(m.group(3))
+    return data
+
+
+def gen_solvers_block(data, src):
+    """Marker-delimited measured block for SOLVERS_SWEEP_RESULTS.md (no picks)."""
+    L = [_RED_BEGIN,
+         "## Latest measured run (auto-refreshed by `bench/tune.py`)", "",
+         f"_Source: `{src}` · NPROB=8192 ns/problem (best swept TB, min of 3 "
+         f"trials, restore-outside-timing protocol) · characterization only — "
+         f"no dispatch table is regenerated._", ""]
+    A = data["bdsv_pcg"]
+    if A:
+        bw = sum(1 for v in A.values() if v["bdsv"] <= v["pcg"])
+        L += ["### bdsv (direct) vs pcg (iterative) — identical block-tridiagonal SPD input", "",
+              f"bdsv is faster in {bw} of {len(A)} cells **on this well-conditioned "
+              f"test system** (see the iters column — pcg's cost scales with the "
+              f"iteration count, so the crossover moves with conditioning).", "",
+              "| BlockSize | Knots | dtype | bdsv ns | pcg ns | pcg iters | pcg/bdsv |",
+              "|-----------|-------|-------|---------|--------|-----------|----------|"]
+        for key in sorted(A, key=lambda k: (k[1], k[2], k[0])):
+            v = A[key]
+            L.append(f"| {key[1]} | {key[2]} | {key[0]} | {v['bdsv']:.2f} | "
+                     f"{v['pcg']:.2f} | {v['iters']} | {v['pcg']/v['bdsv']:.2f} |")
+        L.append("")
+    B = data["spdsv"]
+    if B:
+        L += ["### gesv vs posv vs inv+gemv — same SPD system, single RHS", "",
+              "posv (Cholesky) is the intended SPD path; gesv prices the pivoted-LU "
+              "robustness fallback, inv+gemv the invert-then-multiply anti-pattern.", "",
+              "| N | dtype | gesv ns | posv ns | inv+gemv ns | gesv/posv | inv/posv |",
+              "|---|-------|---------|---------|-------------|-----------|----------|"]
+        for key in sorted(B, key=lambda k: (k[1], k[0])):
+            v = B[key]
+            L.append(f"| {key[1]} | {key[0]} | {v['gesv']:.2f} | {v['posv']:.2f} | "
+                     f"{v['invsv']:.2f} | {v['gesv']/v['posv']:.2f} | "
+                     f"{v['invsv']/v['posv']:.2f} |")
+        L.append("")
+    C = data["eig"]
+    if C:
+        L += ["### syev + eig_clamp — timing only (no contender)", "",
+              "| N | dtype | syev ns | eig_clamp ns |",
+              "|---|-------|---------|--------------|"]
+        for key in sorted(C, key=lambda k: (k[1], k[0])):
+            v = C[key]
+            sy = f"{v['syev']:.2f}" if "syev" in v else "—"
+            ec = f"{v['eig_clamp']:.2f}" if "eig_clamp" in v else "—"
+            L.append(f"| {key[1]} | {key[0]} | {sy} | {ec} |")
+        L.append("")
+    L.append(_RED_END)
+    return "\n".join(L)
+
+
 # ─── diff helper ──────────────────────────────────────────────────────────────
 
 def show_diff(path, new_text, label):
@@ -455,6 +574,8 @@ def main():
                    help="skip blas2 build/run; report from this bench_blas2 sweep .txt")
     p.add_argument("--from-rect", metavar="TXT",
                    help="skip rect build/run; report from this bench_rect sweep .txt")
+    p.add_argument("--from-solvers", metavar="TXT",
+                   help="skip solvers build/run; report from this bench_solvers sweep .txt")
     args = p.parse_args()
 
     legs = [l.strip() for l in args.legs.split(",") if l.strip()]
@@ -462,7 +583,7 @@ def main():
     if bad:
         sys.exit(f"unknown leg(s) {bad}; choose from {ALL_LEGS}")
     offline = bool(args.from_ladder or args.from_reduced
-                   or args.from_blas2 or args.from_rect)
+                   or args.from_blas2 or args.from_rect or args.from_solvers)
     sms = None if (args.sm == "auto" and offline) else (
         detect_sm() if args.sm == "auto" else int(args.sm))
     mdx = mathdx_root()
@@ -499,6 +620,9 @@ def main():
         if "rect" in legs:
             print("── prebuild: rect ────────────────────────────────────────")
             build_rect(sms)
+        if "solvers" in legs:
+            print("── prebuild: solvers ─────────────────────────────────────")
+            build_solvers(sms)
         if "figures" in legs:
             print("── prebuild: figures ─────────────────────────────────────")
             print("  [n/a] figures is pure Python (matplotlib) — nothing to compile.")
@@ -590,6 +714,39 @@ def main():
             txt = txt_path.read_text()
         report_pick_leg(leg, txt, txt_path.name, md_path, args.margin,
                         parse, args.dry_run, changed, note)
+
+    # ── solvers (characterization only — measured + reported, never picked) ──
+    if "solvers" in legs:
+        print("── solvers (bdsv vs pcg, gesv/posv/inv-solve, syev) ──────")
+        txt = None
+        if args.from_solvers:
+            txt_path = pathlib.Path(args.from_solvers)
+            txt = txt_path.read_text()
+        elif sms is None:
+            print("  [skip] solvers needs a GPU or --from-solvers.")
+        else:
+            binp = build_solvers(sms)
+            txt_path = run_mega_sweep(binp, args.quick, "solvers_sweep",
+                                      sched=_SOLVERS_SCHED)
+            txt = txt_path.read_text()
+        if txt:
+            data = parse_solvers(txt)
+            if not any(data.values()):
+                print(f"  ⚠️ no NPROB=8192 rows parsed from {txt_path.name}; "
+                      "nothing written.")
+            else:
+                print(f"  parsed: {len(data['bdsv_pcg'])} bdsv-vs-pcg, "
+                      f"{len(data['spdsv'])} spd-solve, {len(data['eig'])} "
+                      "syev/eig_clamp cells")
+                block = gen_solvers_block(data, txt_path.name)
+                existing = (SOLVERS_MD.read_text() if SOLVERS_MD.exists()
+                            else "# solvers sweep — measured results\n")
+                md = splice_reduced_md(existing, block)
+                if args.dry_run:
+                    changed["solvers"] = show_diff(SOLVERS_MD, md, SOLVERS_MD.name)
+                else:
+                    SOLVERS_MD.write_text(md)
+                    print(f"  wrote {SOLVERS_MD.relative_to(GLASS_DIR)}")
 
     # ── figures ──
     if "figures" in legs:

@@ -62,6 +62,20 @@ python bench/tune.py --sm auto --legs blas2,rect             # timed — quiet G
 python bench/tune.py --legs blas2 --from-blas2 bench/blas2_sweep_<ts>.txt --dry-run
 ```
 
+### The `solvers` leg (characterization only)
+
+**`solvers`** (`bench/bench_solvers.cu`) characterizes the solver-level ops:
+`bdsv` vs `pcg` on the identical block-tridiagonal SPD system (the direct-vs-
+iterative crossover — reported with pcg's iteration count, **never auto-picked**,
+because the right choice is conditioning-dependent), `gesv`/`posv`/`inv`+`gemv`
+on one SPD system (pricing the pivoted-LU fallback and the invert-then-multiply
+anti-pattern), and `syev`/`eig_clamp` timing. Because these ops mutate their
+input, the harness restores pristine device copies between reps **outside** the
+`cudaEvent` window (per-launch event timing; see the methodology section of
+`bench/SOLVERS_SWEEP_RESULTS.md`, where the measured block is spliced), and a
+CPU-checked correctness guard per shape aborts on any solver/reference mismatch.
+Prebuild-cached like the other legs; offline hook `--from-solvers <txt>`.
+
 The shared rule (`bench/tune_pick.py::pick`): a dependency-carrying impl
 (`nvidia`/`cublasdx`/`reduced`) wins **only if it beats the simplest impl by more
 than the margin** — otherwise the no-dependency path (always launchable, no

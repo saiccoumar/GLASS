@@ -12,6 +12,7 @@ mega_sweep_*.txt
 reduced_sweep_*.txt
 blas2_sweep_*.txt
 rect_sweep_*.txt
+solvers_sweep_*.txt
 warp_block_sweep_*.txt
 *.log
 # Persistent build cache (bench/tune.py --prebuild). Hash-keyed compiled binaries.
