@@ -1,27 +1,7 @@
 #pragma once
 #include <cstdint>
+#include "../barrier.cuh" // ct_size (moved there so subset-vendoring consumers get it)
 #include "../flags.cuh"   // FillMode / Diag
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ct_size — compile-time size carrier for the factor/solve `*_impl` bodies.
-//
-// The shared impls take their dimension through a deduced `SizeT` template
-// parameter instead of a hard `uint32_t`. The runtime public overloads pass a
-// plain `uint32_t` (unchanged behavior); the compile-time-size overloads pass
-// `ct_size<N>{}`, whose constexpr conversion makes every use of the dimension a
-// compile-time constant after inlining — so nvcc unrolls the loops and
-// strength-reduces the `%`/`/` indexing with NO body duplication (the same
-// effect `gemm_impl_ct` gets from its dedicated body). A self-made carrier
-// rather than std::integral_constant so no system header lands inside
-// `namespace glass` (this file is included inside the namespace by glass.cuh).
-// Defined here because trsv.cuh is the first of the factor/solve headers pulled
-// in by glass.cuh (before inv/potrf/trsm/ldlt/posv), the same include-order
-// convention those headers already rely on for their cross-file calls.
-// ─────────────────────────────────────────────────────────────────────────────
-template <uint32_t V>
-struct ct_size {
-    __host__ __device__ constexpr operator uint32_t() const { return V; }
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // trsv — triangular solve op(A) x = b, in place (BLAS TRSV).

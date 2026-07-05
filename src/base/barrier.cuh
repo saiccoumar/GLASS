@@ -34,3 +34,25 @@ struct BlockBarrier {
     }
     __device__ __forceinline__ void sync() const { __syncthreads(); }
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ct_size — compile-time size carrier for the factor/solve `*_impl` bodies.
+//
+// The shared impls take their dimension through a deduced `SizeT` template
+// parameter instead of a hard `uint32_t`. The runtime public overloads pass a
+// plain `uint32_t` (unchanged behavior); the compile-time-size overloads pass
+// `ct_size<N>{}`, whose constexpr conversion makes every use of the dimension a
+// compile-time constant after inlining — so nvcc unrolls the loops and
+// strength-reduces the `%`/`/` indexing with NO body duplication (the same
+// effect `gemm_impl_ct` gets from its dedicated body). A self-made carrier
+// rather than std::integral_constant so no system header lands inside
+// `namespace glass` (this file is included inside the namespace by glass.cuh).
+// Defined here (not in trsv.cuh, its original home) because barrier.cuh is the
+// FIRST header glass.cuh pulls in and the one downstream vendoring already
+// carries — every factor/solve user (trsv/inv/syev/ldlt/…) sees it regardless
+// of which subset of headers a consumer embeds.
+// ─────────────────────────────────────────────────────────────────────────────
+template <uint32_t V>
+struct ct_size {
+    __host__ __device__ constexpr operator uint32_t() const { return V; }
+};
