@@ -58,9 +58,56 @@ The block between the markers below is auto-refreshed by `bench/tune.py`.
 <!-- BEGIN tune.py: latest measured run -->
 ## Latest measured run (auto-refreshed by `bench/tune.py`)
 
-_No quiet-GPU sweep recorded yet. Run `python3 bench/tune.py --sm auto --legs
-solvers` on an idle GPU (after `--prebuild`); this block is then auto-filled
-with the measured ns/problem tables._
+_Source: `solvers_sweep_20260705_0122.txt` · NPROB=8192 ns/problem (best swept TB, min of 3 trials, restore-outside-timing protocol) · characterization only — no dispatch table is regenerated._
+
+### bdsv (direct) vs pcg (iterative) — identical block-tridiagonal SPD input
+
+bdsv is faster in 1 of 12 cells **on this well-conditioned test system** (see the iters column — pcg's cost scales with the iteration count, so the crossover moves with conditioning).
+
+| BlockSize | Knots | dtype | bdsv ns | pcg ns | pcg iters | pcg/bdsv |
+|-----------|-------|-------|---------|--------|-----------|----------|
+| 2 | 8 | f32 | 6.22 | 2.31 | 3 | 0.37 |
+| 2 | 8 | f64 | 26.27 | 8.24 | 3 | 0.31 |
+| 2 | 32 | f32 | 24.25 | 3.49 | 3 | 0.14 |
+| 2 | 32 | f64 | 107.31 | 11.50 | 3 | 0.11 |
+| 6 | 8 | f32 | 18.80 | 6.42 | 3 | 0.34 |
+| 6 | 8 | f64 | 94.58 | 31.13 | 3 | 0.33 |
+| 6 | 32 | f32 | 85.75 | 30.75 | 3 | 0.36 |
+| 6 | 32 | f64 | 391.32 | 130.70 | 3 | 0.33 |
+| 6 | 64 | f32 | 178.61 | 82.69 | 3 | 0.46 |
+| 6 | 64 | f64 | 791.59 | 254.81 | 3 | 0.32 |
+| 12 | 16 | f32 | 109.77 | 197.32 | 2 | 1.80 |
+| 12 | 16 | f64 | 462.74 | 230.49 | 2 | 0.50 |
+
+### gesv vs posv vs inv+gemv — same SPD system, single RHS
+
+posv (Cholesky) is the intended SPD path; gesv prices the pivoted-LU robustness fallback, inv+gemv the invert-then-multiply anti-pattern.
+
+| N | dtype | gesv ns | posv ns | inv+gemv ns | gesv/posv | inv/posv |
+|---|-------|---------|---------|-------------|-----------|----------|
+| 4 | f32 | 1.24 | 1.24 | 0.99 | 1.00 | 0.80 |
+| 4 | f64 | 3.75 | 5.51 | 2.00 | 0.68 | 0.36 |
+| 8 | f32 | 2.49 | 2.48 | 2.24 | 1.00 | 0.90 |
+| 8 | f64 | 9.01 | 12.51 | 5.74 | 0.72 | 0.46 |
+| 16 | f32 | 6.50 | 5.52 | 10.57 | 1.18 | 1.91 |
+| 16 | f64 | 25.53 | 29.66 | 23.28 | 0.86 | 0.78 |
+| 32 | f32 | 27.78 | 15.32 | 57.65 | 1.81 | 3.76 |
+| 32 | f64 | 86.08 | 78.24 | 151.87 | 1.10 | 1.94 |
+| 64 | f32 | 162.62 | 77.44 | 360.05 | 2.10 | 4.65 |
+| 64 | f64 | 420.49 | 266.77 | 1072.76 | 1.58 | 4.02 |
+
+### syev + eig_clamp — timing only (no contender)
+
+| N | dtype | syev ns | eig_clamp ns |
+|---|-------|---------|--------------|
+| 4 | f32 | 3.93 | 4.00 |
+| 4 | f64 | 58.36 | 59.09 |
+| 8 | f32 | 25.44 | 25.50 |
+| 8 | f64 | 387.69 | 390.82 |
+| 16 | f32 | 115.72 | 116.41 |
+| 16 | f64 | 1781.74 | 1755.48 |
+| 32 | f32 | 881.85 | 1019.85 |
+| 32 | f64 | 8849.26 | 9306.22 |
 
 <!-- END tune.py -->
 
