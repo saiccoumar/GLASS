@@ -20,7 +20,8 @@ $PY -m pip install -q -e test/pytest-gpu-proof
 # No --gpu-proof-fail-on-skip: GLASS has 10 permanent, documented skips
 # (8x test_l3 "cg kernel covers the default-flag path only", 2x test_getrf
 # "zero leading pivot is singular at n=1"). They are recorded in the receipt;
-# the CI verify step passes --allow-skipped and prints them for inspection.
+# the CI verify step pins them as an EXACT set via test/expected_skips.txt
+# (--expected-skips) — a new skip, or a pinned one that starts running, fails.
 # --gpu-proof-github-user: the signer must be the human KEYHOLDER, not the
 # repo owner — the plugin's default derives from the origin remote, which for
 # org-owned repos yields the org (A2R-Lab) and orgs have no SSH keys.
