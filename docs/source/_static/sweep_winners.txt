@@ -1,9 +1,9 @@
 NPROB=64  f32 winner by op x N:
 op           4      6      8     12     16     24     32     48     64     96    128
-dot       warp   warp   warp   warp   warp   warp   warp   warp   warp   warp  block
-gemv      warp   warp   warp  block   warp nvidia nvidia nvidia nvidia nvidia nvidia
-gemm     block  block nvidia nvidia nvidia nvidia nvidia nvidia nvidia  block  block
-chol     block nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia
+dot      block   warp  block nvidia nvidia   warp   warp   warp   warp  block nvidia
+gemv      warp   warp   warp   warp   warp nvidia nvidia nvidia nvidia nvidia nvidia
+gemm     block  block nvidia  block   warp nvidia nvidia nvidia nvidia  block  block
+chol      warp nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia
 trsv      warp nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia
 posv    nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia
 
@@ -11,7 +11,7 @@ NPROB=64  f64 winner by op x N:
 op           4      6      8     12     16     24     32     48     64     96    128
 dot       warp   warp   warp   warp   warp   warp   warp   warp   warp   warp  block
 gemv     block  block   warp   warp   warp   warp  block  block  block  block  block
-gemm      warp  block nvidia  block  block  block nvidia  block nvidia  block  block
+gemm     block  block nvidia nvidia   warp  block nvidia nvidia  block  block  block
 chol    nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia  block  block
 trsv    nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia  block  block
 posv    nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia  block  block
@@ -19,9 +19,9 @@ posv    nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia  block  b
 NPROB=1024  f32 winner by op x N:
 op           4      6      8     12     16     24     32     48     64     96    128
 dot       warp   warp   warp   warp   warp   warp   warp   warp   warp   warp   warp
-gemv      warp   warp   warp   warp   warp   warp   warp  block  block  block  block
-gemm      warp   warp   warp nvidia nvidia nvidia nvidia nvidia nvidia  block  block
-chol     block nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia
+gemv      warp   warp   warp   warp   warp nvidia   warp  block  block  block  block
+gemm      warp   warp   warp  block   warp nvidia nvidia nvidia nvidia  block  block
+chol      warp nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia
 trsv      warp   warp nvidia nvidia nvidia nvidia nvidia nvidia nvidia  block  block
 posv      warp nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia
 
@@ -29,7 +29,7 @@ NPROB=1024  f64 winner by op x N:
 op           4      6      8     12     16     24     32     48     64     96    128
 dot       warp   warp   warp   warp   warp   warp   warp   warp   warp   warp   warp
 gemv      warp   warp   warp   warp   warp   warp  block  block  block  block  block
-gemm      warp   warp   warp  block  block  block nvidia  block  block  block  block
+gemm      warp   warp  block nvidia   warp  block nvidia  block  block  block  block
 chol     block  block  block  block  block  block nvidia nvidia nvidia  block  block
 trsv    nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia  block  block  block
 posv    nvidia nvidia  block nvidia nvidia nvidia nvidia nvidia nvidia  block  block
@@ -38,7 +38,7 @@ NPROB=8192  f32 winner by op x N:
 op           4      6      8     12     16     24     32     48     64     96    128
 dot       warp   warp   warp   warp   warp   warp   warp   warp   warp   warp   warp
 gemv      warp   warp   warp   warp   warp   warp   warp  block nvidia nvidia   warp
-gemm      warp   warp   warp  block nvidia nvidia nvidia nvidia nvidia  block  block
+gemm      warp   warp   warp   warp   warp  block nvidia nvidia nvidia  block  block
 chol      warp   warp   warp   warp nvidia nvidia nvidia nvidia nvidia nvidia nvidia
 trsv      warp   warp   warp   warp nvidia nvidia nvidia   warp   warp   warp   warp
 posv      warp   warp   warp   warp nvidia nvidia nvidia nvidia nvidia nvidia nvidia
@@ -46,8 +46,8 @@ posv      warp   warp   warp   warp nvidia nvidia nvidia nvidia nvidia nvidia nv
 NPROB=8192  f64 winner by op x N:
 op           4      6      8     12     16     24     32     48     64     96    128
 dot       warp   warp   warp   warp   warp   warp   warp   warp   warp   warp   warp
-gemv      warp   warp   warp   warp   warp   warp   warp   warp  block  block  block
-gemm      warp  block nvidia  block nvidia  block nvidia  block  block  block  block
+gemv      warp   warp   warp   warp   warp   warp  block   warp   warp  block  block
+gemm      warp  block nvidia nvidia   warp  block nvidia  block  block  block  block
 chol     block  block  block  block  block  block nvidia nvidia nvidia  block  block
 trsv    nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia  block  block  block
 posv    nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia nvidia  block  block

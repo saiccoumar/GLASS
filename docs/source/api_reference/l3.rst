@@ -3,7 +3,7 @@ L3 — Matrix Operations
 
 General matrix-matrix products (``gemm`` and its tiled / strided / batched /
 indexed variants), matrix inversion (single, **partial-pivoting**
-``invertMatrix_pivoted``, and **K-way fused** multi-matrix),
+``inv_pivoted``, and **K-way fused** multi-matrix),
 Cholesky factorization (single and **K-way fused**), triangular solves, symmetric
 rank-k / rank-2k updates (``syrk`` / ``syr2k``), symmetric-indefinite ``LDLᵀ``
 (``ldlt``), and SPD solves (``posv`` / ``potrs``). The GEMM family follows the
@@ -12,7 +12,7 @@ standard BLAS convention (``C`` is M×N, contraction K) with ``TRANSPOSE_A`` /
 row-major operand is just a transpose, so per-operand row-major flags were
 removed; see :doc:`../user_guide/concepts/backend_dispatch` for how the dispatch
 GEMM chooses a path. Single-warp (``glass::warp::``) variants of ``gemm``,
-``cholDecomp_InPlace``, and ``trsm`` render inline beside their block-scoped
+``potrf``, ``trsm``, and ``inv`` render inline beside their block-scoped
 sibling; see :doc:`warp`.
 
 gemm
@@ -67,7 +67,17 @@ Matrix inverse
 Cholesky
 --------
 
-.. doxygenfile:: src/base/L3/chol_InPlace.cuh
+.. doxygenfile:: src/base/L3/potrf.cuh
+
+LU with partial pivoting (getrf / getrs / gesv / laswp)
+-------------------------------------------------------
+
+The robustness path for general non-SPD systems: in-place pivoted LU
+(``getrf``, SciPy ``lu_factor``), the matching solves (``getrs`` /
+``gesv``, SciPy ``lu_solve`` / NumPy ``solve``), and the LAPACK-style
+row-interchange helper ``laswp``.
+
+.. doxygenfile:: src/base/L3/getrf.cuh
 
 Triangular solve (trsm)
 -----------------------
@@ -79,6 +89,18 @@ Symmetric rank-k / rank-2k update (syrk / syr2k)
 
 .. doxygenfile:: src/base/L3/syrk.cuh
 
+Symmetric / triangular matrix-matrix multiply (symm / trmm)
+-----------------------------------------------------------
+
+Left-side products against a triangle-stored matrix: ``symm``
+(``C = alpha*A_sym*B + beta*C``, BLAS SYMM — only the ``FILL`` triangle of the
+symmetric ``A`` is stored, the other is read mirrored) and ``trmm``
+(``C = alpha*op(A_tri)*B``, BLAS TRMM but deliberately OUT-of-place into a
+separate ``C`` so the flat one-output-per-thread loop stays race-free;
+``FillMode`` / ``Diag`` / ``TRANSPOSE`` flags as in ``trsv``/``trsm``).
+
+.. doxygenfile:: src/base/L3/symm.cuh
+
 LDLᵀ factorization (ldlt / ldlt_solve)
 --------------------------------------
 
@@ -88,6 +110,18 @@ SPD solve (posv / potrs)
 ------------------------
 
 .. doxygenfile:: src/base/L3/posv.cuh
+
+Symmetric eigenvalues (syev / eig_clamp)
+----------------------------------------
+
+Small-matrix symmetric eigendecomposition via cyclic Jacobi (``syev``,
+NumPy ``np.linalg.eigh``) and the eigenvalue-clamping consumer op
+(``eig_clamp``: decompose, floor the eigenvalues at ``eps``, reconstruct
+``V diag(max(W, eps)) Vᵀ`` in place) — the device-side replacement for a
+host ``Eigen::SelfAdjointEigenSolver`` round-trip when regularizing a
+Hessian mid-solve. Designed for n ≤ 32.
+
+.. doxygenfile:: src/base/L3/syev.cuh
 
 Cooperative-groups variants (``glass::cgrps::``)
 ------------------------------------------------

@@ -1,0 +1,45 @@
+# GPU-less compile smoke: every push/PR compiles the full header surface and
+# all examples with nvcc on a hosted runner (compilation needs no GPU). The
+# actual GPU test suite runs on the lab box — see verify-gpu-proof.yml for the
+# signed-receipt attestation that those tests passed.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  compile-smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [sm_90, sm_120]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install CUDA toolkit (nvcc only, no GPU needed)
+        uses: Jimver/cuda-toolkit@v0.2.19
+        with:
+          cuda: '12.8.1'
+          method: network
+          sub-packages: '["nvcc"]'
+
+      - name: Compile the full header surface
+        run: |
+          cat > smoke.cu <<'EOF'
+          #include "glass.cuh"
+          #include "glass-cgrps.cuh"
+          #include "glass-defaults.cuh"
+          __global__ void k(float* a, float* b, float* s) {
+              glass::gemm<float, 4, 4, 4>(1.f, a, b, 0.f, s);
+              glass::potrf<float, 4>(a);
+              glass::posv<float>(4, a, b);
+              glass::trsm<float, 4, 2>(a, b);
+              glass::warp::trsv<float, 4>(a, b);
+              glass::inv<float, 4>(a, s);
+          }
+          EOF
+          nvcc -std=c++17 -arch=${{ matrix.arch }} -I. -c smoke.cu -o smoke.o
+
+      - name: Compile all examples (MathDx-less set)
+        run: make -C examples -j2 ARCH=${{ matrix.arch }}

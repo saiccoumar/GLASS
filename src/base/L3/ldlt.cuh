@@ -2,7 +2,7 @@
 #include <cstdint>
 // glass.cuh includes L1/iamax.cuh (glass::iamax_lowmem) before this header,
 // so the pivot path below calls it unqualified — same intra-namespace dependency
-// convention as posv.cuh → cholDecomp_InPlace / trsv (no local #include).
+// convention as posv.cuh → potrf / trsv (no local #include).
 
 /**
  * @brief Scratch size in bytes for `ldlt`.
@@ -33,7 +33,7 @@ __host__ __device__ constexpr std::size_t ldlt_scratch_bytes(uint32_t n)
  *   - the implicit unit diagonal of `L` is NOT stored,
  *   - the upper triangle keeps its input values (untouched).
  *
- * Unlike Cholesky (`cholDecomp_InPlace`), there is **no square root**: `D_j` may
+ * Unlike Cholesky (`potrf`), there is **no square root**: `D_j` may
  * be negative or zero, which is exactly what lets LDLᵀ factor an indefinite
  * symmetric matrix (e.g. a KKT / saddle-point system) that has no Cholesky
  * factor. The recurrence is, for column `j`:
@@ -108,9 +108,11 @@ __host__ __device__ constexpr std::size_t ldlt_scratch_bytes(uint32_t n)
  * @param s_fail     Optional flag (CHECK only): 1 on a zero/NaN pivot, else 0. Ignored when null.
  * @param s_inertia  Optional 3 ints (CHECK only): `{n_pos, n_neg, n_zero}` pivot-sign counts. Ignored when null.
  */
-template <typename T, bool CHECK = false>
-__device__ void ldlt(uint32_t n, T *A, T *s_scratch, bool pivot = false, uint32_t *piv = nullptr,
-                     int *s_fail = nullptr, int *s_inertia = nullptr)
+// Shared body (runtime + compile-time overloads): SizeT deduced — uint32_t or
+// ct_size<N> (constant-folds the trip counts and indexing).
+template <typename T, bool CHECK = false, typename SizeT>
+__device__ void ldlt_impl(SizeT n, T *A, T *s_scratch, bool pivot, uint32_t *piv,
+                          int *s_fail, int *s_inertia)
 {
     uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
     uint32_t size = blockDim.x * blockDim.y * blockDim.z;
@@ -202,6 +204,13 @@ __device__ void ldlt(uint32_t n, T *A, T *s_scratch, bool pivot = false, uint32_
     }
 }
 
+template <typename T, bool CHECK = false>
+__device__ void ldlt(uint32_t n, T *A, T *s_scratch, bool pivot = false, uint32_t *piv = nullptr,
+                     int *s_fail = nullptr, int *s_inertia = nullptr)
+{
+    ldlt_impl<T, CHECK>(n, A, s_scratch, pivot, piv, s_fail, s_inertia);
+}
+
 /**
  * @brief Compile-time-size in-place LDLᵀ factorization (LAPACK `sytrf`, lower, non-pivoted).
  *
@@ -229,7 +238,7 @@ template <typename T, uint32_t N, bool CHECK = false>
 __device__ void ldlt(T *A, T *s_scratch, bool pivot = false, uint32_t *piv = nullptr,
                      int *s_fail = nullptr, int *s_inertia = nullptr)
 {
-    ldlt<T, CHECK>(N, A, s_scratch, pivot, piv, s_fail, s_inertia);
+    ldlt_impl<T, CHECK>(ct_size<N>{}, A, s_scratch, pivot, piv, s_fail, s_inertia);
 }
 
 /**
@@ -265,8 +274,10 @@ __device__ void ldlt(T *A, T *s_scratch, bool pivot = false, uint32_t *piv = nul
  * @param b   In/out right-hand side; on return holds the solution x.
  * @param piv Pivot array from the pivoted factorization, or `nullptr` (non-pivoted).
  */
-template <typename T>
-__device__ void ldlt_solve(uint32_t n, const T *LD, T *b, const uint32_t *piv = nullptr)
+// Shared body (runtime + compile-time overloads): SizeT deduced — uint32_t or
+// ct_size<N> (constant-folds the trip counts and indexing).
+template <typename T, typename SizeT>
+__device__ void ldlt_solve_impl(SizeT n, const T *LD, T *b, const uint32_t *piv)
 {
     uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
     uint32_t size = blockDim.x * blockDim.y * blockDim.z;
@@ -309,6 +320,12 @@ __device__ void ldlt_solve(uint32_t n, const T *LD, T *b, const uint32_t *piv = 
     }
 }
 
+template <typename T>
+__device__ void ldlt_solve(uint32_t n, const T *LD, T *b, const uint32_t *piv = nullptr)
+{
+    ldlt_solve_impl<T>(n, LD, b, piv);
+}
+
 /**
  * @brief Compile-time-size LDLᵀ solve `A x = b` in place (LAPACK `sytrs` analogue).
  *
@@ -325,7 +342,7 @@ __device__ void ldlt_solve(uint32_t n, const T *LD, T *b, const uint32_t *piv = 
 template <typename T, uint32_t N>
 __device__ void ldlt_solve(const T *LD, T *b, const uint32_t *piv = nullptr)
 {
-    ldlt_solve<T>(N, LD, b, piv);
+    ldlt_solve_impl<T>(ct_size<N>{}, LD, b, piv);
 }
 
 namespace warp {

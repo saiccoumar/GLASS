@@ -14,6 +14,11 @@ import tempfile
 
 import pytest
 
+# The pytest-gpu-proof submodule ships its own test tree (plugin dev tests with
+# a pytester conftest); it is not part of GLASS's suite and its conftest would
+# shadow this one. Excluded at collection so plain `pytest test/` just works.
+collect_ignore = ["pytest-gpu-proof"]
+
 # ─── paths ────────────────────────────────────────────────────────────────────
 
 TEST_DIR  = pathlib.Path(__file__).parent
@@ -157,7 +162,13 @@ def _hash_sources(cu_path: pathlib.Path) -> str:
               GLASS_DIR / "src" / "base" / "L1" / "scal.cuh",
               GLASS_DIR / "src" / "base" / "L1" / "asum.cuh",
               GLASS_DIR / "src" / "base" / "L1" / "nrm2.cuh",
+              GLASS_DIR / "src" / "base" / "L1" / "norm.cuh",
               GLASS_DIR / "src" / "base" / "L1" / "nrm1_diff.cuh",
+              GLASS_DIR / "src" / "base" / "L1" / "symmetrize.cuh",
+              GLASS_DIR / "test" / "cuda" / "test_symmetrize.cu",
+              GLASS_DIR / "src" / "base" / "L1" / "rot.cuh",
+              GLASS_DIR / "src" / "base" / "L3" / "symm.cuh",
+              GLASS_DIR / "test" / "cuda" / "test_symm_rot.cu",
               GLASS_DIR / "src" / "base" / "L1" / "axpy_strided.cuh",
               GLASS_DIR / "src" / "base" / "L1" / "copy_strided.cuh",
               GLASS_DIR / "test" / "cuda" / "test_l1_round2.cu",
@@ -179,10 +190,12 @@ def _hash_sources(cu_path: pathlib.Path) -> str:
               GLASS_DIR / "src" / "base" / "L3" / "syrk.cuh",
               GLASS_DIR / "test" / "cuda" / "test_syrk.cu",
               GLASS_DIR / "test" / "cuda" / "test_fused.cu",
-              GLASS_DIR / "src" / "base" / "L3" / "chol_InPlace.cuh",
+              GLASS_DIR / "src" / "base" / "L3" / "potrf.cuh",
               GLASS_DIR / "test" / "cuda" / "test_factor_check.cu",
               GLASS_DIR / "src" / "base" / "L3" / "inv.cuh",
               GLASS_DIR / "src" / "base" / "L3" / "trsm.cuh",
+              GLASS_DIR / "src" / "base" / "L3" / "getrf.cuh",
+              GLASS_DIR / "test" / "cuda" / "test_getrf.cu",
               GLASS_DIR / "src" / "base" / "L3" / "ldlt.cuh",
               GLASS_DIR / "test" / "cuda" / "test_ldlt.cu",
               GLASS_DIR / "src" / "base" / "L2" / "gemv_segmented.cuh",
@@ -190,11 +203,15 @@ def _hash_sources(cu_path: pathlib.Path) -> str:
               GLASS_DIR / "test" / "cuda" / "test_trsv.cu",
               GLASS_DIR / "src" / "base" / "L3" / "posv.cuh",
               GLASS_DIR / "test" / "cuda" / "test_posv.cu",
+              GLASS_DIR / "src" / "base" / "L3" / "syev.cuh",
+              GLASS_DIR / "test" / "cuda" / "test_syev.cu",
               GLASS_DIR / "src" / "base" / "L3" / "riccati.cuh",
               GLASS_DIR / "test" / "cuda" / "test_solve.cu",
               GLASS_DIR / "src" / "base" / "L3" / "gemm_batched_indexed.cuh",
               GLASS_DIR / "src" / "base" / "banded" / "bdmv.cuh",
               GLASS_DIR / "src" / "base" / "banded" / "block_access.cuh",
+              GLASS_DIR / "src" / "base" / "banded" / "bdsv.cuh",
+              GLASS_DIR / "test" / "cuda" / "test_bdsv.cu",
               GLASS_DIR / "test" / "cuda" / "test_block_access.cu",
               GLASS_DIR / "src" / "base" / "pcg" / "solve.cuh",
               GLASS_DIR / "glass-defaults.cuh",
@@ -259,10 +276,12 @@ def bins(tmp_path_factory):
         "l3": compile_binary("test_l3", build_dir, CUDA_ARCH),
         "qp": compile_binary("test_qp", build_dir, CUDA_ARCH),
         "banded": compile_binary("test_banded", build_dir, CUDA_ARCH),
+        "bdsv": compile_binary("test_bdsv", build_dir, CUDA_ARCH),
         "pcg": compile_binary("test_pcg", build_dir, CUDA_ARCH),
         "syrk": compile_binary("test_syrk", build_dir, CUDA_ARCH),
         "trsv": compile_binary("test_trsv", build_dir, CUDA_ARCH),
         "ldlt": compile_binary("test_ldlt", build_dir, CUDA_ARCH),
+        "getrf": compile_binary("test_getrf", build_dir, CUDA_ARCH),
         "iamax": compile_binary("test_iamax", build_dir, CUDA_ARCH),
         "fused": compile_binary("test_fused", build_dir, CUDA_ARCH),
         "warp": compile_binary("test_warp", build_dir, CUDA_ARCH),
@@ -277,6 +296,9 @@ def bins(tmp_path_factory):
         "defaults": compile_binary("test_defaults", build_dir, CUDA_ARCH),
         "l1_round2": compile_binary("test_l1_round2", build_dir, CUDA_ARCH),
         "block_access": compile_binary("test_block_access", build_dir, CUDA_ARCH),
+        "symmetrize": compile_binary("test_symmetrize", build_dir, CUDA_ARCH),
+        "symm_rot": compile_binary("test_symm_rot", build_dir, CUDA_ARCH),
+        "syev": compile_binary("test_syev", build_dir, CUDA_ARCH),
     }
     # test_l3_nvidia.cu includes glass-nvidia.cuh and exercises the SIMT-only
     # batched APIs (gemm_batched_1d, gemm_strided_batched_1d). It does NOT
@@ -436,3 +458,20 @@ def run_op(binary: pathlib.Path, op: str, version: str, args: list, inputs: list
     finally:
         for f in tmpfiles:
             os.unlink(f)
+
+
+# ─── gpu-proof integration (test/pytest-gpu-proof submodule) ───────────────────
+# test/run_gpu_proof.sh runs this suite with --gpu-proof-enable to emit a signed
+# receipt (test/gpu-proof.json) that the CPU-only verify-gpu-proof CI checks.
+# The plugin only records tests carrying the gpu_proof marker, so mark every
+# collected test. The marker is registered here too so plain runs (plugin not
+# installed) stay warning-free.
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "gpu_proof: recorded in the signed GPU-run receipt")
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        item.add_marker(pytest.mark.gpu_proof)

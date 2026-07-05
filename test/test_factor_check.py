@@ -1,4 +1,4 @@
-"""CHECK flag on glass::cholDecomp_InPlace (block/warp/cgrps) and glass::ldlt.
+"""CHECK flag on glass::potrf (block/warp/cgrps) and glass::ldlt.
 
 The off-path (CHECK=false) byte-identity is covered by the existing test_l3
 (chol) / test_ldlt suites still passing — this file exercises the new reporting:

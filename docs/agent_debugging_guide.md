@@ -16,7 +16,7 @@ Source map you will reference constantly:
 - Pure-SIMT surface: `glass.cuh` → `src/base/L1/*.cuh`, `src/base/L2/*.cuh`, `src/base/L3/*.cuh`.
 - Cooperative-groups surface: `glass-cgrps.cuh`.
 - Vendor backends: `glass-nvidia.cuh` → `src/nvidia/{l1,l2,l3,l3_simt,lapack,query_simt,tuning_table,types}.cuh`.
-- Warp-scoped variants: inline in the base L1/L2/L3 headers (`src/base/L1/{reduce,dot,axpy,copy,scal,iamax}.cuh`, `src/base/L2/gemv.cuh`, `src/base/L3/{gemm,chol_InPlace,trsv,trsm,posv}.cuh`), under `namespace warp`.
+- Warp-scoped variants: inline in the base L1/L2/L3 headers (`src/base/L1/{reduce,dot,axpy,copy,scal,iamax}.cuh`, `src/base/L2/gemv.cuh`, `src/base/L3/{gemm,potrf,trsv,trsm,posv}.cuh`), under `namespace warp`.
 - Block-tridiagonal: `glass::bdmv` (`src/base/banded/bdmv.cuh`), `glass::pcg` + `glass::pcg_smem_size` (`src/base/pcg/solve.cuh`).
 - Host smem helper: `glass_gemm_dispatch_smem` in `glass.cuh`.
 - Tests: `test/conftest.py` (compile + cache harness), `test/test_l{1,2,3}.py`,
@@ -84,10 +84,10 @@ that thread *j* has not yet written.
   round (`__syncthreads()` after each `for (i=rank; i<left; i+=size) x[i] += x[i+left];`);
   `reduce_fast` syncs after the inter-warp `s_scratch` write; `gemm_tiled` in
   `src/base/L3/gemm.cuh` syncs around each tile load (`__syncthreads()` before and after the
-  inner-product over the tile). The matrix factor/solve flows (`inv.cuh`, `chol_InPlace.cuh`,
+  inner-product over the tile). The matrix factor/solve flows (`inv.cuh`, `potrf.cuh`,
   `trsm.cuh`, `ldlt.cuh`, `posv.cuh`) sync between elimination steps. `inv.cuh` and
-  `chol_InPlace.cuh` also have **K-way fused overloads** — `invertMatrix(K, dims, MAX_DIM, mats,
-  s_temp)` and `cholDecomp_InPlace(K, dims, MAX_DIM, mats)` — with thin 2-/3-matrix wrappers (the
+  `potrf.cuh` also have **K-way fused overloads** — `inv(K, dims, MAX_DIM, mats,
+  s_temp)` and `potrf(K, dims, MAX_DIM, mats)` — with thin 2-/3-matrix wrappers (the
   3-matrix invert is GATO's Schur kernel, Q_k/Q_kp1/R_k). They interleave K independent matrices'
   sweeps over one shared `MAX_DIM = max(dims)` pivot/row loop (matrix `m` idles once `pivRC >=
   dims[m]`), keeping the **same augmented `[V | I]` convention (invert) / in-place lower `L·Lᵀ`
@@ -224,8 +224,7 @@ When the buffer is reached through a caller `__restrict__` pointer under aggress
 (observed: sm_120 / CUDA 13.2, `-O3`), nvcc can **cache that shared load stale** — the non-writing
 lanes read a previous value, so an in-place warp solve returns wrong results for a fraction of
 inputs. `__syncwarp()` guarantees *execution* convergence, not that the compiler reloads the
-shared address. The fix (`1df6e40`, in `warp::cholDecomp_InPlace` / `warp::trsm` /
-`warp::trsm_transpose`):
+shared address. The fix (`1df6e40`, in `warp::potrf` / `warp::trsv`):
 
 ```cpp
 T diag = static_cast<T>(0);

@@ -63,8 +63,16 @@ A few more vector/matrix calls (runtime sizes shown):
 .. note::
 
    Matrices default to **column-major** (Fortran) order, consistent with cuBLAS.
-   The pure-SIMT ``glass::`` API takes a ``ROW_MAJOR=true`` template parameter
-   to switch storage order.
+   ``gemm`` follows the standard BLAS convention —
+   ``glass::gemm<T, M, N, K, TRANSPOSE_A, TRANSPOSE_B, ROW_MAJOR_C>`` (``C`` is
+   M×N, contraction K) — and has **no per-operand row-major flag**: a row-major
+   M×K operand occupies the same bytes as a column-major K×M matrix, so you just
+   read it with ``TRANSPOSE_*=true`` (the single ``ROW_MAJOR_C`` flag covers the
+   output). ``gemv`` is the exception and keeps a per-matrix ``ROW_MAJOR`` flag,
+   because its ``TRANSPOSE`` selects the mathematical op (``A·x`` vs ``Aᵀ·x``)
+   and cannot also stand in for storage order. See the "row-major is just a
+   transpose" walkthrough in ``examples/11_rowmajor_is_transpose.cu`` and the
+   convention primer in ``examples/10_gemm_basics.cu``.
 
 Next steps
 ----------

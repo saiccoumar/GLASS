@@ -1,5 +1,5 @@
-Block-tridiagonal Matvec (``glass::bdmv``)
-==============================================
+Block-tridiagonal Ops (``glass::bdmv`` / ``glass::bdsv``)
+=========================================================
 
 Single-block matrix-vector product for a **block-tridiagonal** matrix — the
 sparsity pattern of the KKT / Schur systems that arise in trajectory
@@ -14,6 +14,18 @@ See :doc:`../user_guide/concepts/block_tridiagonal` for the layout in detail, an
 :doc:`pcg` for the conjugate-gradient solver built on top of this matvec.
 
 .. doxygenfile:: src/base/banded/bdmv.cuh
+
+Direct solve (``glass::bdsv``)
+------------------------------
+
+Block-Cholesky (block-Thomas) **direct** factor + solve on the same strips —
+the exact one-sweep alternative to :doc:`pcg` for SPD block-tridiagonal
+systems: ``bdsv_factor`` (in place; ``MAIN`` ← Cholesky factor, ``LEFT`` ←
+coupling block), ``bdsv_solve`` (forward/backward block substitution, reusable
+per right-hand side), and the fused ``bdsv``. Composed from
+``potrf``/``trsm``/``syrk``/``gemv``/``trsv``.
+
+.. doxygenfile:: src/base/banded/bdsv.cuh
 
 Block accessors (``store_block`` / ``load_block``)
 --------------------------------------------------

@@ -127,6 +127,78 @@ def parse_mega_sweep(text, nprob=8192):
     return data
 
 
+BLAS2_OPS = ("syrk", "syr2k", "ldlt", "ldltsv", "inv", "trmv", "ger")
+
+# Raw per-backend ns from a bench_blas2 row (same grammar as the mega sweep, but
+# 2-way: the warp leg is absent for the block-only ops inv/trmv/ger):
+#   "<op>  N=<N> | BLOCK ... [| WARP ...] || block tb<TB>=<ns> [warp w<WPB>=<ns>] -> ..."
+_B2_ROW_RE = re.compile(
+    r"^(syr2k|syrk|ldltsv|ldlt|inv|trmv|ger)\s+N=(\d+)\b.*\|\|\s*"
+    r"block\s+tb\d+=([\d.]+)(?:\s+warp\s+w\d+=([\d.]+))?")
+
+
+def parse_blas2(text, nprob=8192):
+    """``(dtype, op, N) -> {block[, warp]}`` raw ns/problem at ``nprob``.
+
+    Reads the raw per-backend numbers (NOT the harness's ``-> WINNER`` verdict,
+    a bare argmin) so :func:`pick`/:func:`verdict` re-decide under the shared
+    margin. Ops without a warp:: variant yield a block-only dict.
+    """
+    data, dtype, cur = {}, None, None
+    for line in text.splitlines():
+        if line.startswith("####"):
+            m = _HDR_RE.search(line)
+            if m:
+                cur, dtype = int(m.group(1)), m.group(2)
+            continue
+        if cur != nprob:
+            continue
+        m = _B2_ROW_RE.match(line.strip())
+        if m:
+            op, N = m.group(1), int(m.group(2))
+            d = {"block": float(m.group(3))}
+            if m.group(4):
+                d["warp"] = float(m.group(4))
+            data[(dtype, op, N)] = d
+    return data
+
+
+# Raw per-backend ns from a bench_rect row. Shapes are rectangular, so rows are
+# keyed by the full dim tuple: gemv "M=<M> N=<N>", gemm "M=<M> K=<K> N=<N>".
+_RECT_GEMV_RE = re.compile(
+    r"^gemv\s+M=(\d+)\s+N=(\d+)\b.*\|\|\s*block\s+tb\d+=([\d.]+)\s+warp\s+w\d+=([\d.]+)")
+_RECT_GEMM_RE = re.compile(
+    r"^gemm\s+M=(\d+)\s+K=(\d+)\s+N=(\d+)\b.*\|\|\s*block\s+tb\d+=([\d.]+)\s+warp\s+w\d+=([\d.]+)")
+
+
+def parse_rect(text, nprob=8192):
+    """``(dtype, op, dims) -> {block, warp}`` raw ns/problem at ``nprob``.
+
+    ``dims`` is ``(M, N)`` for gemv and ``(M, K, N)`` for gemm (C is MxN,
+    contraction K).
+    """
+    data, dtype, cur = {}, None, None
+    for line in text.splitlines():
+        if line.startswith("####"):
+            m = _HDR_RE.search(line)
+            if m:
+                cur, dtype = int(m.group(1)), m.group(2)
+            continue
+        if cur != nprob:
+            continue
+        s = line.strip()
+        m = _RECT_GEMV_RE.match(s)
+        if m:
+            data[(dtype, "gemv", (int(m.group(1)), int(m.group(2))))] = \
+                {"block": float(m.group(3)), "warp": float(m.group(4))}
+            continue
+        m = _RECT_GEMM_RE.match(s)
+        if m:
+            data[(dtype, "gemm", (int(m.group(1)), int(m.group(2)), int(m.group(3))))] = \
+                {"block": float(m.group(4)), "warp": float(m.group(5))}
+    return data
+
+
 _REDUCED_RE = re.compile(
     r"^REDUCED\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+([\d.]+)")
 
@@ -162,4 +234,33 @@ if __name__ == "__main__":
     # verdict noise floor.
     w, note = verdict({"simt": 0.02, "cublasdx": 0.01}, 0.05, {"cublasdx"}, noise_floor=0.05)
     assert w == "simt" and "noise floor" in note, note
+    # parse_blas2(): 2-way rows, warp leg optional, ldlt/ldltsv disambiguation.
+    _b2 = "\n".join([
+        "################ NPROB=8192  reps=250  dtype=f32 ################",
+        "syrk   N=8   | BLOCK  tb32=1.10  tb64=1.00  | WARP  w1=0.80  w2=0.90"
+        "  || block tb64=1.00  warp w1=0.80  -> WARP (1.25x)",
+        "ldltsv N=16  | BLOCK  tb32=3.00  | WARP  w1=2.00"
+        "  || block tb32=3.00  warp w1=2.00  -> WARP (1.50x)",
+        "ldlt   N=16  | BLOCK  tb32=2.50  | WARP  w1=2.40"
+        "  || block tb32=2.50  warp w1=2.40  -> WARP (1.04x)",
+        "inv    N=8   | BLOCK  tb32=5.00  tb64=4.00  || block tb64=4.00  -> BLOCK (1.00x)",
+        "################ NPROB=64  reps=1000  dtype=f32 ################",
+        "ger    N=8   | BLOCK  tb32=9.00  || block tb32=9.00  -> BLOCK (1.00x)",
+    ])
+    _c = parse_blas2(_b2)
+    assert _c[("f32", "syrk", 8)] == {"block": 1.00, "warp": 0.80}, _c
+    assert _c[("f32", "ldltsv", 16)] == {"block": 3.00, "warp": 2.00}, _c
+    assert _c[("f32", "ldlt", 16)] == {"block": 2.50, "warp": 2.40}, _c
+    assert _c[("f32", "inv", 8)] == {"block": 4.00}, "block-only op parses without warp"
+    assert ("f32", "ger", 8) not in _c, "NPROB=64 section must be filtered out"
+    # parse_rect(): gemv (M,N) + gemm (M,K,N) keys.
+    _rc = parse_rect("\n".join([
+        "################ NPROB=8192  reps=250  dtype=f64 ################",
+        "gemv  M=64  N=8   | BLOCK  tb32=1.5  | WARP  w1=1.2"
+        "  || block tb32=1.50  warp w1=1.20  -> WARP (1.25x)",
+        "gemm  M=32  K=8   N=32  | BLOCK  tb32=2.5  | WARP  w1=3.0"
+        "  || block tb32=2.50  warp w1=3.00  -> BLOCK (1.20x)",
+    ]))
+    assert _rc[("f64", "gemv", (64, 8))] == {"block": 1.50, "warp": 1.20}, _rc
+    assert _rc[("f64", "gemm", (32, 8, 32))] == {"block": 2.50, "warp": 3.00}, _rc
     print("tune_pick self-test OK")

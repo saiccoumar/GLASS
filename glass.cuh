@@ -33,7 +33,9 @@ namespace glass {
     #include "./src/base/L1/ident.cuh"
     #include "./src/base/L1/scal.cuh"
     #include "./src/base/L1/swap.cuh"
+    #include "./src/base/L1/rot.cuh"
     #include "./src/base/L1/elementwise_logic.cuh"
+    #include "./src/base/L1/symmetrize.cuh"
     #include "./src/base/L1/transpose.cuh"
     #include "./src/base/L1/prefix_sum.cuh"
     #include "./src/base/L1/norm.cuh"
@@ -63,17 +65,22 @@ namespace glass {
     #include "./src/base/L3/congruence.cuh"
     #include "./src/base/L3/syrk.cuh"
     #include "./src/base/L3/gemm_strided.cuh"
+    #include "./src/base/L3/symm.cuh"
     #include "./src/base/L3/gemm_batched_indexed.cuh"
     #include "./src/base/L3/inv.cuh"
-    #include "./src/base/L3/chol_InPlace.cuh"
+    #include "./src/base/L3/potrf.cuh"
     #include "./src/base/L3/trsm.cuh"
+    #include "./src/base/L3/getrf.cuh"
     #include "./src/base/L3/ldlt.cuh"
     #include "./src/base/L3/posv.cuh"
+    #include "./src/base/L3/syev.cuh"
     #include "./src/base/L3/riccati.cuh"
 
-    /*  block-tridiagonal: glass::bdmv (matvec) + glass::pcg (solver)  */
+    /*  block-tridiagonal: glass::bdmv (matvec), glass::bdsv (direct solve),
+        glass::pcg (iterative solver)  */
     #include "./src/base/banded/bdmv.cuh"
     #include "./src/base/banded/block_access.cuh"
+    #include "./src/base/banded/bdsv.cuh"
     #include "./src/base/pcg/solve.cuh"
 }
 

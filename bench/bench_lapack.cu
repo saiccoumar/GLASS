@@ -1,10 +1,10 @@
 // bench_lapack.cu — LAPACK timings: pure-SIMT glass vs. cuSOLVERDx-backed glass::nvidia.
 //
 // Variants per size N (square SPD problem with NRHS=1):
-//   pure-SIMT chol_InPlace        — glass::cholDecomp_InPlace<T, N>
-//   pure-SIMT chol+trsm           — chol_InPlace then glass::trsm<T, N>
-//   glass::nvidia cholDecomp_InPlace    — cuSOLVERDx potrf via glass::nvidia::cholDecomp_InPlace<T, N, TC>
-//   glass::nvidia chol+trsm       — cholDecomp_InPlace then glass::nvidia::trsm<T, N, 1, TC>
+//   pure-SIMT potrf        — glass::potrf<T, N>
+//   pure-SIMT chol+trsm           — potrf then glass::trsm<T, N, 1>
+//   glass::nvidia potrf    — cuSOLVERDx potrf via glass::nvidia::potrf<T, N, TC>
+//   glass::nvidia chol+trsm       — potrf then glass::nvidia::trsm<T, N, 1, TC>
 //   glass::nvidia posv            — fused factor+solve via glass::nvidia::posv<T, N, 1, TC>
 //
 // Anti-optimization safeguards:
@@ -51,7 +51,7 @@ __global__ void k_simt_chol(const float* A_master, float* A, volatile float* sin
     for (int rep = 0; rep < iters; rep++) {
         for (uint32_t i = rank; i < N*N; i += size) smem[i] = A_master[i];
         __syncthreads();
-        glass::cholDecomp_InPlace<float, N>(smem);
+        glass::potrf<float, N>(smem);
         __syncthreads();
         if (threadIdx.x == 0) sink[rep & 0xFF] = smem[0];
         __syncthreads();
@@ -71,9 +71,9 @@ __global__ void k_simt_chol_trsm(const float* A_master, const float* b_master,
         for (uint32_t i = rank; i < N*N; i += size) s_A[i] = A_master[i];
         for (uint32_t i = rank; i < N;   i += size) s_b[i] = b_master[i];
         __syncthreads();
-        glass::cholDecomp_InPlace<float, N>(s_A);
+        glass::potrf<float, N>(s_A);
         __syncthreads();
-        glass::trsm<float, N>(s_A, s_b);
+        glass::trsm<float, N, 1>(s_A, s_b);
         __syncthreads();
         if (threadIdx.x == 0) sink[rep & 0xFF] = s_b[0];
         __syncthreads();
@@ -117,12 +117,12 @@ __global__ void k_nv_chol(const float* A_master, float* A, volatile float* sink,
     uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
     uint32_t size = blockDim.x * blockDim.y * blockDim.z;
     for (int rep = 0; rep < iters; rep++) {
-        // glass::nvidia::cholDecomp_InPlace works on a global pointer; reload from master.
+        // glass::nvidia::potrf works on a global pointer; reload from master.
         if (rank < N*N) {
             for (uint32_t i = rank; i < N*N; i += size) A[i] = A_master[i];
         }
         __syncthreads();
-        glass::nvidia::cholDecomp_InPlace<float, N, THREADS>(A, nv_smem);
+        glass::nvidia::potrf<float, N, THREADS>(A, nv_smem);
         __syncthreads();
         if (threadIdx.x == 0) sink[rep & 0xFF] = A[0];
         __syncthreads();
@@ -139,7 +139,7 @@ __global__ void k_nv_chol_trsm(const float* A_master, const float* b_master,
         for (uint32_t i = rank; i < N*N; i += size) A[i] = A_master[i];
         for (uint32_t i = rank; i < N;   i += size) b[i] = b_master[i];
         __syncthreads();
-        glass::nvidia::cholDecomp_InPlace<float, N, THREADS>(A, nv_smem);
+        glass::nvidia::potrf<float, N, THREADS>(A, nv_smem);
         __syncthreads();
         glass::nvidia::trsm<float, N, 1, THREADS>(1.f, A, b, nv_smem);
         __syncthreads();
@@ -206,7 +206,7 @@ static void bench_size_ct(int iters) {
     k_simt_chol<N><<<1, THREADS, simt_chol_smem>>>(dA_master, dA, dSink, iters);
     cudaDeviceSynchronize();
     clock_gettime(CLOCK_MONOTONIC, &t1);
-    printf("glass::cholDecomp_InPlace    n=%2d  %.3f us/op\n",
+    printf("glass::potrf    n=%2d  %.3f us/op\n",
            N, elapsed_us(t0, t1) / iters);
 
     // pure-SIMT chol+trsm
@@ -219,12 +219,12 @@ static void bench_size_ct(int iters) {
            N, elapsed_us(t0, t1) / iters);
 
     // glass::nvidia chol
-    constexpr size_t nv_chol_smem = glass::nvidia::cholDecomp_InPlace_scratch_bytes<float, N, THREADS>();
+    constexpr size_t nv_chol_smem = glass::nvidia::potrf_scratch_bytes<float, N, THREADS>();
     clock_gettime(CLOCK_MONOTONIC, &t0);
     k_nv_chol<N><<<1, THREADS, nv_chol_smem>>>(dA_master, dA, dSink, iters);
     cudaDeviceSynchronize();
     clock_gettime(CLOCK_MONOTONIC, &t1);
-    printf("glass::nvidia::cholDecomp_InPlace  n=%2d  %.3f us/op\n",
+    printf("glass::nvidia::potrf  n=%2d  %.3f us/op\n",
            N, elapsed_us(t0, t1) / iters);
 
     // glass::nvidia chol+trsm

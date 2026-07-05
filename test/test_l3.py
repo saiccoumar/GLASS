@@ -312,14 +312,14 @@ def test_packed_gemm(bins, k, case):
 @pytest.mark.parametrize("cond", [None, 1e4])  # well-conditioned + ill-conditioned
 @pytest.mark.parametrize("version", CG_SIMPLE)
 def test_inv(bins, n, cond, version):
-    """invertMatrix across the canonical thread sweep (incl. partial/odd/non-warp
+    """inv across the canonical thread sweep (incl. partial/odd/non-warp
     counts), two input conditionings. The augmented-row save loop must be
     grid-strided (`ind += size`); a non-strided `ind++` is a write-write race that
     compute-sanitizer racecheck flags even though every racing write stores the same
     value (so it is invisible at 32/256 — see test_hardening doc). Output must be
     byte-for-byte identical at every block size."""
     A = make_spd(n, seed=n, cond=cond)
-    # invertMatrix expects [A | I] layout (n*2n) column-major
+    # inv expects [A | I] layout (n*2n) column-major
     AI = np.hstack([A, np.eye(n, dtype=np.float32)])   # row layout (n x 2n)
     AI_col = np.asfortranarray(AI).ravel(order='F')
     expected = np.linalg.inv(A).astype(np.float32)
@@ -338,7 +338,7 @@ def test_inv(bins, n, cond, version):
 
 
 def _aug(M, d):
-    # [M | I] column-major augmented buffer for invertMatrix
+    # [M | I] column-major augmented buffer for inv
     return np.asfortranarray(np.hstack([M, np.eye(d, dtype=np.float32)])).ravel(order='F')
 
 
@@ -453,14 +453,38 @@ def test_chol(bins, n, version):
 # ─── trsm ─────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("n", [3, 4, 6, 8])
+@pytest.mark.parametrize("nrhs", [1, 3])
+@pytest.mark.parametrize("transpose", [False, True])
 @pytest.mark.parametrize("version", CG_SIMPLE)
-def test_trsm(bins, n, version):
+def test_trsm(bins, n, nrhs, transpose, version):
+    if version == "cg" and transpose:
+        pytest.skip("cg kernel covers the default-flag path only")
     L = make_lower_triangular(n, rng=RNG)
-    b = RNG.random(n).astype(np.float32)
+    B = RNG.random((n, nrhs)).astype(np.float32)
     L_col = np.asfortranarray(L).ravel(order='F')
-    result = run_op(bins["l3"], "trsm", version, args=[n], inputs=[L_col, b])
-    # Verify L @ result == b (residual check avoids scipy dependency)
-    residual = L.astype(np.float64) @ result.astype(np.float64) - b.astype(np.float64)
+    B_col = np.asfortranarray(B).ravel(order='F')
+    result = run_op(bins["l3"], "trsm", version,
+                    args=[n, nrhs, int(transpose)], inputs=[L_col, B_col])
+    X = result.reshape(n, nrhs, order='F')
+    # Verify op(L) @ X == B (residual check avoids scipy dependency)
+    opL = L.T if transpose else L
+    residual = opL.astype(np.float64) @ X.astype(np.float64) - B.astype(np.float64)
+    assert np.allclose(residual, 0, atol=1e-3)
+
+
+@pytest.mark.parametrize("transpose", [False, True])
+def test_trsm_warp_7_3(bins, transpose):
+    # Single-warp multi-RHS trsm (compile-time N=7, NRHS=3), forward + transpose.
+    n, nrhs = 7, 3
+    L = make_lower_triangular(n, rng=RNG)
+    B = RNG.random((n, nrhs)).astype(np.float32)
+    L_col = np.asfortranarray(L).ravel(order='F')
+    B_col = np.asfortranarray(B).ravel(order='F')
+    result = run_op(bins["l3"], "trsm_warp", "warp",
+                    args=[int(transpose)], inputs=[L_col, B_col])
+    X = result.reshape(n, nrhs, order='F')
+    opL = L.T if transpose else L
+    residual = opL.astype(np.float64) @ X.astype(np.float64) - B.astype(np.float64)
     assert np.allclose(residual, 0, atol=1e-3)
 
 
@@ -468,7 +492,7 @@ def test_trsm(bins, n, version):
 
 
 def test_posv_warp_7(bins):
-    # Single-warp SPD solve A x = b via warp:: chol + trsm + trsm_transpose (N=7).
+    # Single-warp SPD solve A x = b via warp:: potrf + trsv forward/back (N=7).
     n = 7
     A = make_spd(n, rng=RNG)
     b = RNG.random(n).astype(np.float32)

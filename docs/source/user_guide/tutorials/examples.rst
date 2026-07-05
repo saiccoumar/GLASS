@@ -42,6 +42,33 @@ repository.
    * - ``09_backend_picker``
      - pick a backend + launch config with ``glass-defaults.cuh``, then dispatch
      - pure SIMT
+   * - ``10_gemm_basics``
+     - the standard-BLAS GEMM convention (``C`` is M×N, contraction K) and all
+       four ``TRANSPOSE_A`` / ``TRANSPOSE_B`` combos, at a non-square shape
+     - pure SIMT
+   * - ``11_rowmajor_is_transpose``
+     - "row-major is just a transpose" — a row-major operand read with
+       ``TRANSPOSE_*`` gives bit-identical output
+     - pure SIMT
+   * - ``12_nrm2``
+     - Euclidean norm ``nrm2`` (BLAS name), block + warp forms
+     - pure SIMT
+   * - ``13_gemm_strided``
+     - ``gemm_strided`` — GEMM on column-major sub-blocks with explicit
+       leading dims
+     - pure SIMT
+   * - ``14_ldlt_solve``
+     - symmetric-**indefinite** solve: ``ldlt`` + ``ldlt_solve``, plus the
+       ``CHECK=true`` failure-flag + inertia reporting path
+     - pure SIMT
+   * - ``15_riccati_gain``
+     - LQR feedback gain ``K = (R + BᵀPB)⁻¹(BᵀPA)`` via ``riccati_gain`` with
+       ``riccati_scratch_bytes`` dynamic smem
+     - pure SIMT
+   * - ``16_inv``
+     - matrix inversion on the augmented ``[A | I]`` layout: ``inv``, and the
+       robust ``inv_pivoted`` on a zero leading pivot
+     - pure SIMT
 
 Building
 --------
@@ -55,7 +82,7 @@ All examples ``#include`` the GLASS headers from the repo root, so build with
    cd examples
    nvcc -std=c++17 -arch=sm_75 -I.. 01_axpy_simt.cu -o axpy && ./axpy
 
-Examples 01–05, 07, 08, 09 are pure SIMT (plain ``nvcc``, no external libraries).
+Examples 01–05 and 07–16 are pure SIMT (plain ``nvcc``, no external libraries).
 Only ``06_nvidia_gemm`` needs MathDx — see :doc:`using_nvidia_backend` and
 :doc:`../getting_started/installation` for the cuBLASDx flags.
 
@@ -85,6 +112,30 @@ L1 / L2 / L3 device ops
 ~~~~~~~~~~~
 
 .. literalinclude:: ../../../../examples/03_reduce.cu
+   :language: cuda
+
+10 — GEMM basics (BLAS convention + transpose flags)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ../../../../examples/10_gemm_basics.cu
+   :language: cuda
+
+11 — row-major is just a transpose
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ../../../../examples/11_rowmajor_is_transpose.cu
+   :language: cuda
+
+12 — nrm2 (Euclidean norm)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ../../../../examples/12_nrm2.cu
+   :language: cuda
+
+13 — gemm_strided (sub-block GEMM)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ../../../../examples/13_gemm_strided.cu
    :language: cuda
 
 Backends
@@ -127,6 +178,24 @@ Solvers & dispatch
 ~~~~~~~~~~~~~~~~~~~~
 
 .. literalinclude:: ../../../../examples/09_backend_picker.cu
+   :language: cuda
+
+14 — symmetric-indefinite LDLᵀ solve (+ CHECK / inertia)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ../../../../examples/14_ldlt_solve.cu
+   :language: cuda
+
+15 — LQR feedback gain (riccati_gain)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ../../../../examples/15_riccati_gain.cu
+   :language: cuda
+
+16 — matrix inversion (inv / inv_pivoted, augmented [A | I])
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ../../../../examples/16_inv.cu
    :language: cuda
 
 See also :doc:`sweep_results` for the measured ladder behind the picker, and

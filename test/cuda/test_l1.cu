@@ -1,11 +1,16 @@
 // test_l1.cu — dispatch L1 GLASS operations and print float32 results to stdout
-// Usage: ./test_l1 <op> <cg|simple|simple_lm|simple_hs> <n> [extra args] [input.bin ...]
+// Usage: ./test_l1 <op> <cg|simple|simple_lm|simple_hs|warp> <threads> <n> [extra args] [input.bin ...]
+//
+// <threads> is the RUNTIME block size (launched as <<<1, threads>>>) so the
+// Python driver can sweep the canonical thread counts. warp:: ops ignore it
+// and always launch one 32-lane warp.
 //
 // Versions:
 //   cg        — glass::cgrps:: (cooperative groups)
 //   simple    — glass::        (threadIdx, default)
 //   simple_lm — glass::*_lowmem
 //   simple_hs — glass::*_fast
+//   warp      — glass::warp::  (single 32-lane warp)
 
 #include <cstdio>
 #include <cstdlib>
@@ -93,6 +98,17 @@ __global__ void k_nrm2_simple_hs(int n, float* x, float* scratch) {
 __global__ void k_infnorm_cg(int n, float* x) { glass::cgrps::infnorm(n, x); }
 __global__ void k_infnorm_simple(int n, float* x) { glass::infnorm(n, x); }
 
+// ── vector_norm family (non-destructive ‖a‖₂ into out[0]; a untouched) ───────
+__global__ void k_vector_norm_simple(int n, float* a, float* out) {
+    glass::vector_norm(n, a, out);
+}
+__global__ void k_vector_norm_simple_lm(int n, float* a, float* out) {
+    glass::vector_norm_lowmem(n, a, out);
+}
+__global__ void k_vector_norm_simple_hs(int n, float* a, float* out, float* scratch) {
+    glass::vector_norm_fast(n, a, out, scratch);
+}
+
 __global__ void k_asum_cg(int n, float* x, float* out) { glass::cgrps::asum(n, x, out); }
 __global__ void k_asum_simple_lm(int n, float* x, float* out) {
     glass::asum_lowmem(n, x, out);
@@ -111,11 +127,11 @@ __global__ void k_set_const_simple(int n, float alpha, float* x) {
     glass::set_const(n, alpha, x);
 }
 
-__global__ void k_loadIdentity_cg(int n, float* A) { glass::cgrps::loadIdentity(n, A); }
-__global__ void k_loadIdentity_simple(int n, float* A) { glass::loadIdentity(n, A); }
+__global__ void k_loadIdentity_cg(int n, float* A) { glass::cgrps::set_identity(n, A); }
+__global__ void k_loadIdentity_simple(int n, float* A) { glass::set_identity(n, A); }
 
-__global__ void k_addI_cg(int n, float alpha, float* A) { glass::cgrps::addI(n, A, alpha); }
-__global__ void k_addI_simple(int n, float alpha, float* A) { glass::addI(n, A, alpha); }
+__global__ void k_addI_cg(int n, float alpha, float* A) { glass::cgrps::add_identity(n, A, alpha); }
+__global__ void k_addI_simple(int n, float alpha, float* A) { glass::add_identity(n, A, alpha); }
 
 __global__ void k_transpose_cg(int N, int M, float* a, float* b) {
     glass::cgrps::transpose(N, M, a, b);
@@ -241,15 +257,25 @@ static bool is_warp(const char* v)   { return strcmp(v, "warp") == 0; }
 // ─── main ────────────────────────────────────────────────────────────────────
 
 int main(int argc, char** argv) {
-    if (argc < 4) {
-        fprintf(stderr, "Usage: %s <op> <cg|simple|simple_lm|simple_hs> <n> [args...] [files...]\n", argv[0]);
+    if (argc < 5) {
+        fprintf(stderr, "Usage: %s <op> <cg|simple|simple_lm|simple_hs|warp> <threads> <n> [args...] [files...]\n", argv[0]);
         return 1;
     }
     const char* op  = argv[1];
     const char* ver = argv[2];
+    // Runtime block size: argv[3] is <threads>. Splice it out of argv so every
+    // op handler below keeps its historical argument indices (n at argv[3], ...).
+    THREADS = atoi(argv[3]);
+    if (THREADS < 1) { fprintf(stderr, "bad thread count %d\n", THREADS); return 1; }
+    for (int i = 3; i + 1 < argc; i++) argv[i] = argv[i + 1];
+    argc--;
     int n = atoi(argv[3]);
 
-    float* d_scratch = alloc_device_vec(32);
+    // Inter-warp scratch for the *_fast reductions and dot_strided_coalesced:
+    // ceil(threads/32) elements of T (see glass::reduce_fast_scratch_bytes).
+    float* d_scratch;
+    cudaMalloc(&d_scratch, glass::reduce_fast_scratch_bytes<float>(THREADS));
+    cudaMemset(d_scratch, 0, glass::reduce_fast_scratch_bytes<float>(THREADS));
 
     if (strcmp(op, "axpy") == 0) {
         float alpha = atof(argv[4]);
@@ -358,6 +384,22 @@ int main(int argc, char** argv) {
         cudaDeviceSynchronize();
         print_device_vec(dx, 1);
 
+    } else if (strcmp(op, "vector_norm") == 0) {
+        // Non-destructive norm: prints out[0] on line 1 and the (untouched)
+        // input vector on line 2 so the driver can assert a is not clobbered.
+        float* da = read_device_vec(argv[4], n);
+        float* dout = alloc_device_vec(n);   // lowmem/default use out as length-n scratch
+        if (is_lm(ver)) {
+            k_vector_norm_simple_lm<<<1, THREADS>>>(n, da, dout);
+        } else if (is_hs(ver)) {
+            k_vector_norm_simple_hs<<<1, THREADS>>>(n, da, dout, d_scratch);
+        } else {
+            k_vector_norm_simple<<<1, THREADS>>>(n, da, dout);
+        }
+        cudaDeviceSynchronize();
+        print_device_vec(dout, 1);
+        print_device_vec(da, n);
+
     } else if (strcmp(op, "asum") == 0) {
         float* dx = read_device_vec(argv[4], n);
         float* dout = alloc_device_vec(n);
@@ -392,14 +434,14 @@ int main(int argc, char** argv) {
         cudaDeviceSynchronize();
         print_device_vec(dx, n);
 
-    } else if (strcmp(op, "loadIdentity") == 0) {
+    } else if (strcmp(op, "set_identity") == 0) {
         float* dA = alloc_device_vec(n * n);
         if (is_cg(ver))  k_loadIdentity_cg<<<1, THREADS>>>(n, dA);
         else             k_loadIdentity_simple<<<1, THREADS>>>(n, dA);
         cudaDeviceSynchronize();
         print_device_vec(dA, n * n);
 
-    } else if (strcmp(op, "addI") == 0) {
+    } else if (strcmp(op, "add_identity") == 0) {
         float alpha = atof(argv[4]);
         float* dA = read_device_vec(argv[5], n * n);
         if (is_cg(ver))  k_addI_cg<<<1, THREADS>>>(n, alpha, dA);

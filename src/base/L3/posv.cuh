@@ -5,8 +5,8 @@
  * @file posv.cuh
  * @brief SPD linear solve via Cholesky + two triangular solves (pure SIMT).
  *
- * `posv` / `potrs` are thin single-block compositions of `cholDecomp_InPlace`
- * (`chol_InPlace.cuh`) and `trsv` (`trsv.cuh`). Both callees end with a trailing
+ * `posv` / `potrs` are thin single-block compositions of `potrf`
+ * (`potrf.cuh`) and `trsv` (`trsv.cuh`). Both callees end with a trailing
  * `__syncthreads()`, so the factor and the two solves compose with NO inter-call
  * barrier. Pure-SIMT companion to `glass::nvidia::posv`. Column-major throughout.
  */
@@ -20,8 +20,8 @@
  * prismatic/revolute Jacobians). Trailing `__syncthreads()` so the shifted A is
  * block-visible before factoring. Internal; used by the flagged `posv` overloads.
  */
-template <typename T, bool REG_DIAG = false>
-__device__ void _posv_regularize(uint32_t n, T *A, T rho)
+template <typename T, bool REG_DIAG = false, typename SizeT>
+__device__ void _posv_regularize(SizeT n, T *A, T rho)
 {
     uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
     uint32_t size = blockDim.x * blockDim.y * blockDim.z;
@@ -53,12 +53,23 @@ __device__ void _posv_regularize(uint32_t n, T *A, T rho)
  * @param A  In/out SPD matrix (column-major); overwritten with its factor `L`.
  * @param b  In/out right-hand side; on return holds the solution `x`.
  */
+// Shared body (runtime + compile-time overloads): SizeT deduced — uint32_t or
+// ct_size<N> — and forwarded down through potrf_impl/trsv_impl so the WHOLE
+// compile-time chain constant-folds.
+template <typename T, typename SizeT>
+__device__ void posv_impl(SizeT n, T *A, T *b)
+{
+    potrf_impl<BlockBarrier, T>(BlockBarrier{}, n, A, nullptr);   // A -> L (lower); trailing __syncthreads
+    uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
+    uint32_t size = blockDim.x * blockDim.y * blockDim.z;
+    trsv_impl<T, FillMode::Lower, Diag::NonUnit, /*TRANSPOSE=*/false>(rank, size, n, A, b);  // forward: L y = b
+    trsv_impl<T, FillMode::Lower, Diag::NonUnit, /*TRANSPOSE=*/true >(rank, size, n, A, b);  // back:   Lᵀ x = y
+}
+
 template <typename T>
 __device__ void posv(uint32_t n, T *A, T *b)
 {
-    cholDecomp_InPlace<T>(n, A);            // A -> L (lower); trailing __syncthreads
-    trsv<T, true, false, false>(n, A, b);  // forward: L y = b
-    trsv<T, true, false, true>(n, A, b);   // back:    Lᵀ x = y
+    posv_impl<T>(n, A, b);
 }
 
 /**
@@ -75,12 +86,12 @@ __device__ void posv(uint32_t n, T *A, T *b)
  * @param b  In/out right-hand side; on return holds the solution `x`.
  */
 template <typename T, uint32_t N>
-__device__ void posv(T *A, T *b) { posv<T>(N, A, b); }
+__device__ void posv(T *A, T *b) { posv_impl<T>(ct_size<N>{}, A, b); }
 
 /**
  * @brief Solve the SPD system `A x = b` from a precomputed Cholesky factor (LAPACK potrs).
  *
- * Given the lower factor `L` (e.g. from `cholDecomp_InPlace`), solves
+ * Given the lower factor `L` (e.g. from `potrf`), solves
  * `L Lᵀ x = b` by forward then back substitution — the reusable-factor /
  * multi-solve path (no re-factor). `L` is read-only; `b` is overwritten with `x`.
  * Thread-count invariant. SciPy equivalent: `x = scipy.linalg.cho_solve((L, True), b)`.
@@ -90,11 +101,21 @@ __device__ void posv(T *A, T *b) { posv<T>(N, A, b); }
  * @param L  Lower Cholesky factor (column-major, `n*n`; read-only).
  * @param b  In/out right-hand side; on return holds the solution `x`.
  */
+// Shared body (runtime + compile-time overloads): SizeT deduced and forwarded
+// through trsv_impl (see posv_impl).
+template <typename T, typename SizeT>
+__device__ void potrs_impl(SizeT n, const T *L, T *b)
+{
+    uint32_t rank = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
+    uint32_t size = blockDim.x * blockDim.y * blockDim.z;
+    trsv_impl<T, FillMode::Lower, Diag::NonUnit, /*TRANSPOSE=*/false>(rank, size, n, L, b);  // forward: L y = b
+    trsv_impl<T, FillMode::Lower, Diag::NonUnit, /*TRANSPOSE=*/true >(rank, size, n, L, b);  // back:   Lᵀ x = y
+}
+
 template <typename T>
 __device__ void potrs(uint32_t n, const T *L, T *b)
 {
-    trsv<T, true, false, false>(n, L, b);  // forward: L y = b
-    trsv<T, true, false, true>(n, L, b);   // back:    Lᵀ x = y
+    potrs_impl<T>(n, L, b);
 }
 
 /**
@@ -106,7 +127,7 @@ __device__ void potrs(uint32_t n, const T *L, T *b)
  * @param b  In/out right-hand side; on return holds the solution `x`.
  */
 template <typename T, uint32_t N>
-__device__ void potrs(const T *L, T *b) { potrs<T>(N, L, b); }
+__device__ void potrs(const T *L, T *b) { potrs_impl<T>(ct_size<N>{}, L, b); }
 
 // ─── multi-RHS overloads (column-major B, factor once / solve per column) ─────
 
@@ -121,9 +142,10 @@ __device__ void potrs(const T *L, T *b) { potrs<T>(N, L, b); }
  *
  * `B` (and `X`) is `n × nrhs` stored **column-major**: column `c` begins at
  * `B + c*n` and occupies `n` contiguous elements. The Cholesky factor completes
- * before the first column's solve (its trailing `__syncthreads()`), and each
- * `trsv` self-syncs, so no extra barrier is needed between columns. Thread-count
- * invariant. NumPy equivalent: `X = np.linalg.solve(A, B)` (A SPD, B `n×nrhs`).
+ * before the solve (its trailing `__syncthreads()`); all columns are then solved
+ * together by the multi-RHS `trsm` (per-step barriers shared across right-hand
+ * sides). Thread-count invariant. NumPy equivalent:
+ * `X = np.linalg.solve(A, B)` (A SPD, B `n×nrhs`).
  *
  * @par Regularize + check (`REGULARIZE` / `CHECK` / `REG_DIAG`, all compile-out, default off)
  * `REGULARIZE` adds a shift to `A`'s diagonal before factoring — `rho·I`
@@ -146,16 +168,23 @@ __device__ void potrs(const T *L, T *b) { potrs<T>(N, L, b); }
  * @param rho    Diagonal shift added to A when REGULARIZE (ignored otherwise).
  * @param s_fail Optional non-PD flag when CHECK (set to 1 on a non-PD pivot, else 0).
  */
+// Shared body (runtime + compile-time overloads): SizeT/SizeU deduced —
+// uint32_t or ct_size<N>/ct_size<NRHS> — and forwarded down through
+// _posv_regularize/potrf_impl/trsm_impl so the WHOLE compile-time chain folds.
+template <typename T, bool REGULARIZE = false, bool CHECK = false, bool REG_DIAG = false,
+          typename SizeT, typename SizeU>
+__device__ void posv_impl(SizeT n, SizeU nrhs, T *A, T *B, T rho, int *s_fail)
+{
+    if constexpr (REGULARIZE) _posv_regularize<T, REG_DIAG>(n, A, rho);  // rho*I or rho*diag(A)
+    potrf_impl<BlockBarrier, T, CHECK>(BlockBarrier{}, n, A, s_fail);   // A -> L (lower); trailing __syncthreads
+    trsm_impl<BlockBarrier, T, FillMode::Lower, Diag::NonUnit, /*TRANSPOSE=*/false>(BlockBarrier{}, n, nrhs, A, B);  // forward: L Y = B
+    trsm_impl<BlockBarrier, T, FillMode::Lower, Diag::NonUnit, /*TRANSPOSE=*/true >(BlockBarrier{}, n, nrhs, A, B);  // back:   Lᵀ X = Y
+}
+
 template <typename T, bool REGULARIZE = false, bool CHECK = false, bool REG_DIAG = false>
 __device__ void posv(uint32_t n, uint32_t nrhs, T *A, T *B, T rho = T(0), int *s_fail = nullptr)
 {
-    if constexpr (REGULARIZE) _posv_regularize<T, REG_DIAG>(n, A, rho);  // rho*I or rho*diag(A)
-    cholDecomp_InPlace<T, CHECK>(n, A, s_fail);   // A -> L (lower); trailing __syncthreads
-    for (uint32_t c = 0; c < nrhs; c++) {
-        T *Bc = B + c * n;                        // column c (column-major)
-        trsv<T, true, false, false>(n, A, Bc);    // forward: L y = b
-        trsv<T, true, false, true>(n, A, Bc);     // back:    Lᵀ x = y
-    }
+    posv_impl<T, REGULARIZE, CHECK, REG_DIAG>(n, nrhs, A, B, rho, s_fail);
 }
 
 /**
@@ -187,21 +216,21 @@ __device__ void posv(uint32_t n, uint32_t nrhs, T *A, T *B, T rho = T(0), int *s
 template <typename T, uint32_t N, uint32_t NRHS, bool REGULARIZE = false, bool CHECK = false, bool REG_DIAG = false>
 __device__ void posv(T *A, T *B, T rho = T(0), int *s_fail = nullptr)
 {
-    posv<T, REGULARIZE, CHECK, REG_DIAG>(N, NRHS, A, B, rho, s_fail);
+    posv_impl<T, REGULARIZE, CHECK, REG_DIAG>(ct_size<N>{}, ct_size<NRHS>{}, A, B, rho, s_fail);
 }
 
 /**
  * @brief Multi-RHS SPD solve `A X = B` from a precomputed Cholesky factor (LAPACK potrs).
  *
- * Given the lower factor `L` (e.g. from `cholDecomp_InPlace`), solves
+ * Given the lower factor `L` (e.g. from `potrf`), solves
  * `L Lᵀ X = B` for each of the `nrhs` columns by forward then back substitution
  * — the reusable-factor / multi-solve path (no re-factor). `L` is read-only; `B`
  * is overwritten with `X`.
  *
  * `B` (and `X`) is `n × nrhs` stored **column-major**: column `c` begins at
- * `B + c*n`. Each `trsv` self-syncs, so no barrier between columns is needed.
- * Thread-count invariant. SciPy equivalent:
- * `X = scipy.linalg.cho_solve((L, True), B)`.
+ * `B + c*n`. All columns are solved together by the multi-RHS `trsm` (per-step
+ * barriers shared across right-hand sides). Thread-count invariant. SciPy
+ * equivalent: `X = scipy.linalg.cho_solve((L, True), B)`.
  *
  * @tparam T     Scalar type.
  * @param n      Dimension (`L` is `n×n`, each column of `B` has length `n`).
@@ -209,14 +238,19 @@ __device__ void posv(T *A, T *B, T rho = T(0), int *s_fail = nullptr)
  * @param L      Lower Cholesky factor (column-major, `n*n`; read-only).
  * @param B      In/out right-hand sides (`n×nrhs`, column-major); on return holds `X`.
  */
+// Shared body (runtime + compile-time overloads): SizeT/SizeU deduced and
+// forwarded through trsm_impl (see the multi-RHS posv_impl).
+template <typename T, typename SizeT, typename SizeU>
+__device__ void potrs_impl(SizeT n, SizeU nrhs, const T *L, T *B)
+{
+    trsm_impl<BlockBarrier, T, FillMode::Lower, Diag::NonUnit, /*TRANSPOSE=*/false>(BlockBarrier{}, n, nrhs, L, B);  // forward: L Y = B
+    trsm_impl<BlockBarrier, T, FillMode::Lower, Diag::NonUnit, /*TRANSPOSE=*/true >(BlockBarrier{}, n, nrhs, L, B);  // back:   Lᵀ X = Y
+}
+
 template <typename T>
 __device__ void potrs(uint32_t n, uint32_t nrhs, const T *L, T *B)
 {
-    for (uint32_t c = 0; c < nrhs; c++) {
-        T *Bc = B + c * n;                        // column c (column-major)
-        trsv<T, true, false, false>(n, L, Bc);    // forward: L y = b
-        trsv<T, true, false, true>(n, L, Bc);     // back:    Lᵀ x = y
-    }
+    potrs_impl<T>(n, nrhs, L, B);
 }
 
 /**
@@ -232,4 +266,4 @@ __device__ void potrs(uint32_t n, uint32_t nrhs, const T *L, T *B)
  * @param B  In/out right-hand sides (`N×NRHS`, column-major); on return holds `X`.
  */
 template <typename T, uint32_t N, uint32_t NRHS>
-__device__ void potrs(const T *L, T *B) { potrs<T>(N, NRHS, L, B); }
+__device__ void potrs(const T *L, T *B) { potrs_impl<T>(ct_size<N>{}, ct_size<NRHS>{}, L, B); }

@@ -138,42 +138,52 @@ static void launch_gemm_ct(bool warp, int th, int ta, int tb, int rmc, int nb,
 
 // ─── inv kernels ──────────────────────────────────────────────────────────────
 __global__ void k_inv_cg(int n, float* A, float* scratch) {
-    glass::cgrps::invertMatrix(n, A, scratch);
+    glass::cgrps::inv(n, A, scratch);
 }
 __global__ void k_inv_simple(int n, float* A, float* scratch) {
-    glass::invertMatrix(n, A, scratch);
+    glass::inv(n, A, scratch);
 }
 __global__ void k_inv_pivot_simple(int n, float* A, float* scratch) {
-    glass::invertMatrix_pivoted(n, A, scratch);
+    glass::inv_pivoted(n, A, scratch);
 }
 __global__ void k_inv2_simple(int dimA, int dimB, int maxd, float* A, float* B, float* scratch) {
-    glass::invertMatrix(dimA, dimB, maxd, A, B, scratch);
+    glass::inv(dimA, dimB, maxd, A, B, scratch);
 }
 __global__ void k_inv3_simple(int dimA, int dimB, int dimC, int maxd, float* A, float* B, float* C, float* scratch) {
-    glass::invertMatrix(dimA, dimB, dimC, maxd, A, B, C, scratch);
+    glass::inv(dimA, dimB, dimC, maxd, A, B, C, scratch);
 }
 
 // ─── chol kernels ─────────────────────────────────────────────────────────────
 __global__ void k_chol_cg(int n, float* A) {
-    glass::cgrps::cholDecomp_InPlace(n, A);
+    glass::cgrps::potrf(n, A);
 }
 __global__ void k_chol_simple(int n, float* A) {
-    glass::cholDecomp_InPlace(n, A);
+    glass::potrf(n, A);
 }
 
-// ─── trsm kernels ─────────────────────────────────────────────────────────────
-__global__ void k_trsm_cg(int n, float* L, float* b) {
-    glass::cgrps::trsm(n, L, b);
+// ─── trsm kernels (multi-RHS, flagged) ────────────────────────────────────────
+__global__ void k_trsm_cg(int n, int nrhs, const float* A, float* B) {
+    glass::cgrps::trsm(n, (uint32_t)nrhs, A, B);
 }
-__global__ void k_trsm_simple(int n, float* L, float* b) {
-    glass::trsm(n, L, b);
+__global__ void k_trsm_simple(int n, int nrhs, const float* A, float* B) {
+    glass::trsm<float>(n, nrhs, A, B);
+}
+__global__ void k_trsm_simple_t(int n, int nrhs, const float* A, float* B) {
+    glass::trsm<float, glass::FillMode::Lower, glass::Diag::NonUnit, true>(n, nrhs, A, B);
+}
+// warp multi-RHS trsm (compile-time N=7, NRHS=3), forward + transpose forms
+__global__ void k_trsm_warp_7_3(const float* A, float* B) {
+    glass::warp::trsm<float, 7, 3>(A, B);
+}
+__global__ void k_trsm_warp_7_3_t(const float* A, float* B) {
+    glass::warp::trsm<float, 7, 3, glass::FillMode::Lower, glass::Diag::NonUnit, true>(A, B);
 }
 
 // ─── warp SPD solve (N=7) ─────────────────────────────────────────────────────
 __global__ void k_posv_warp_7(float* A, float* b) {
-    glass::warp::cholDecomp_InPlace<float, 7>(A);
-    glass::warp::trsm<float, 7>(A, b);
-    glass::warp::trsm_transpose<float, 7>(A, b);
+    glass::warp::potrf<float, 7>(A);
+    glass::warp::trsv<float, 7>(A, b);                                                       // forward: L y = b
+    glass::warp::trsv<float, 7, glass::FillMode::Lower, glass::Diag::NonUnit, true>(A, b);   // back:   Lᵀ x = y
 }
 
 // ─── gemm_strided kernels (standard convention: A M×K lead A_RS, B K×N lead B_RS) ──
@@ -322,12 +332,24 @@ int main(int argc, char** argv) {
 
     } else if (strcmp(op, "trsm") == 0) {
         int n = atoi(argv[3]);
-        float* dL = read_device_vec(argv[4], n * n);
-        float* db = read_device_vec(argv[5], n);
-        if (cg) k_trsm_cg<<<1, THREADS>>>(n, dL, db);
-        else    k_trsm_simple<<<1, THREADS>>>(n, dL, db);
+        int nrhs = atoi(argv[4]);
+        int transpose = atoi(argv[5]);
+        float* dL = read_device_vec(argv[6], n * n);
+        float* dB = read_device_vec(argv[7], n * nrhs);
+        if (cg)             k_trsm_cg<<<1, THREADS>>>(n, nrhs, dL, dB);
+        else if (transpose) k_trsm_simple_t<<<1, THREADS>>>(n, nrhs, dL, dB);
+        else                k_trsm_simple<<<1, THREADS>>>(n, nrhs, dL, dB);
         cudaDeviceSynchronize();
-        print_device_vec(db, n);
+        print_device_vec(dB, n * nrhs);
+
+    } else if (strcmp(op, "trsm_warp") == 0) {
+        int transpose = atoi(argv[3]);
+        float* dL = read_device_vec(argv[4], 7 * 7);
+        float* dB = read_device_vec(argv[5], 7 * 3);
+        if (transpose) k_trsm_warp_7_3_t<<<1, 32>>>(dL, dB);
+        else           k_trsm_warp_7_3<<<1, 32>>>(dL, dB);
+        cudaDeviceSynchronize();
+        print_device_vec(dB, 7 * 3);
 
     } else if (strcmp(op, "posv_warp") == 0) {
         int n = atoi(argv[3]);

@@ -45,7 +45,7 @@ warp per problem, for packing many tiny problems into a block); all share the sa
 Both `glass::` and `glass::cgrps::` offer **runtime** (size as arg) and **compile-time** (size
 as template arg) overloads. Reductions additionally offer `_lowmem` (no scratch)
 and `_fast` (warp-shuffle) suffixed forms (e.g. `glass::reduce_lowmem` / `glass::reduce_fast`). The dense surface covers `gemm`/`gemv`/`ger`,
-`iamax`, `trsv`/`trmv`, `syrk`/`syr2k`, `inv`/`cholDecomp_InPlace` (single **and K-way fused**),
+`iamax`, `trsv`/`trmv`, `syrk`/`syr2k`, `inv`/`potrf` (single **and K-way fused**),
 `ldlt`/`ldlt_solve`, and `posv`/`potrs`; plus contraction-parallel `*_reduced`, `tensor_*`, and
 `congruence_*` families. See the [namespace & naming guide](docs/source/user_guide/concepts/namespaces.rst).
 
@@ -133,7 +133,7 @@ The README is a landing page; the deep reference lives in the
 - **Reductions are destructive.** `dot` / `nrm2` / reduction variants write the result to `x[0]`
   and may consume the input as scratch; `nrm2` squares elements before reducing. The
   `glass::warp::` forms return the value instead.
-- `cholDecomp_InPlace` fills only the **lower triangle**; the upper retains input values.
+- `potrf` fills only the **lower triangle**; the upper retains input values.
 - `glass::nvidia::*` (default form) requires exactly `gemm_threads<T,M,N,K>()` threads; use the
   `BLOCK_THREADS` template parameter (with `DEFINE_NVIDIA_<NAME>_BLOCKDIM`) to launch any count
   `≥ gemm_min_block_threads<T,M,N,K>()`. Compile without `-DNDEBUG` for a clean assertion instead

@@ -17,6 +17,8 @@ import tempfile
 import numpy as np
 import pytest
 
+from conftest import THREAD_SWEEP, THREAD_SWEEP_CORE
+
 RNG = np.random.default_rng(11)
 
 RTOL = 1e-2
@@ -31,17 +33,17 @@ SHAPES = [
 ]
 TRANSPOSE_COMBOS = [(0, 0), (1, 0), (0, 1), (1, 1)]
 
-# Full thread-invariance sweep for the block surface — spans the 32 boundary;
-# 31 & 57 are the load-bearing partial-warp cases.
-THREADS_SWEEP = (1, 7, 31, 32, 33, 57, 64, 96, 128, 256)
 
-
-def _storage(M, N, K, ta, tb, seed):
+def _storage(M, N, K, ta, tb, seed, kind="normal"):
     """Logical op(A) (M×K), op(B) (K×N) + physical col-major storage (transpose
-    stores op(_)ᵀ col-major)."""
+    stores op(_)ᵀ col-major). kind='mixed' alternates huge/tiny contraction
+    slices (1e3/1e-3) to stress the lane-partial accumulation."""
     rng = np.random.default_rng(seed)
     opA = rng.standard_normal((M, K)).astype(np.float32)
     opB = rng.standard_normal((K, N)).astype(np.float32)
+    if kind == "mixed":
+        opA[:, 0::2] *= 1e3
+        opA[:, 1::2] *= 1e-3
     A_phys = opA.T if ta else opA
     B_phys = opB.T if tb else opB
     return opA, opB, A_phys, B_phys
@@ -80,30 +82,41 @@ def _oracle(alpha, opA, opB, beta, C0):
 @pytest.mark.parametrize("ta,tb", TRANSPOSE_COMBOS)
 @pytest.mark.parametrize("alpha,beta", [(1.5, 0.3), (1.0, 0.0)])
 def test_reduced_block(bins, M, N, K, ta, tb, alpha, beta):
+    """Oracle-correct AND bit-identical over the core sweep (the *_reduced
+    engine is engineered to be thread-count invariant across the 32 boundary)."""
     opA, opB, A_phys, B_phys = _storage(M, N, K, ta, tb, seed=M * 100 + N * 10 + K + ta + tb)
     C = RNG.random((M, N)).astype(np.float32)
     expected = _oracle(alpha, opA, opB, beta, C)
-    r = _run(bins["reduced"], "block", 256, M, N, K, ta, tb, alpha, beta, A_phys, B_phys, C.copy())
-    assert np.allclose(r, expected, rtol=RTOL, atol=ATOL), f"\nresult=\n{r}\nexpected=\n{expected}"
+    outs = []
+    for t in THREAD_SWEEP_CORE:
+        outs.append(_run(bins["reduced"], "block", t, M, N, K, ta, tb, alpha, beta,
+                         A_phys, B_phys, C.copy()))
+    assert np.allclose(outs[0], expected, rtol=RTOL, atol=ATOL), \
+        f"\nresult=\n{outs[0]}\nexpected=\n{expected}"
+    for t, r in zip(THREAD_SWEEP_CORE[1:], outs[1:]):
+        assert np.array_equal(outs[0], r), f"thread-count non-invariance at {t}"
 
 
 # ─── thread-count invariance: bit-identical across the 32 boundary ───────────
 
 @pytest.mark.parametrize("M,N,K", [(8, 8, 8), (14, 14, 14), (7, 2, 9), (2, 2, 33), (4, 4, 64)])
-def test_reduced_thread_invariance(bins, M, N, K):
+@pytest.mark.parametrize("kind", ["normal", "mixed"])
+def test_reduced_thread_invariance(bins, M, N, K, kind):
     """Block surface: bit-identical at 1/7/31/32/33/57/64/96/128/256 threads
     (the <32 register path must match the warp-shuffle rounding), all matching
-    the oracle."""
+    the oracle. 'mixed' alternates huge/tiny contraction slices."""
     alpha, beta = 1.5, 0.3
-    opA, opB, A_phys, B_phys = _storage(M, N, K, 0, 0, seed=M + N + K)
+    opA, opB, A_phys, B_phys = _storage(M, N, K, 0, 0, seed=M + N + K, kind=kind)
     C = RNG.random((M, N)).astype(np.float32)
     expected = _oracle(alpha, opA, opB, beta, C)
+    # mixed magnitudes ~1e3 → rtol-dominated closeness
+    atol = ATOL * (1e3 if kind == "mixed" else 1.0)
     outs = []
-    for t in THREADS_SWEEP:
+    for t in THREAD_SWEEP:
         r = _run(bins["reduced"], "block", t, M, N, K, 0, 0, alpha, beta, A_phys, B_phys, C.copy())
-        assert np.allclose(r, expected, rtol=RTOL, atol=ATOL), f"threads={t} mismatch vs oracle"
+        assert np.allclose(r, expected, rtol=RTOL, atol=atol), f"threads={t} mismatch vs oracle"
         outs.append(r)
-    for t, r in zip(THREADS_SWEEP[1:], outs[1:]):
+    for t, r in zip(THREAD_SWEEP[1:], outs[1:]):
         assert np.array_equal(outs[0], r), f"thread-count non-invariance at {t}"
 
 

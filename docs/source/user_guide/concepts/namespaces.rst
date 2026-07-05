@@ -47,7 +47,7 @@ When you add an operation, decide what kind of variation it is:
   ``glass::reduced::`` namespace — matching the existing ``gemm_tiled`` /
   ``gemm_dispatch`` precedent. Same scope, different name.
 - **Optional, additive behavior → a compile-time** ``bool`` **flag that compiles
-  out.** ``cholDecomp_InPlace<T, N, CHECK>``, ``ldlt<T, N, CHECK>``,
+  out.** ``potrf<T, N, CHECK>``, ``ldlt<T, N, CHECK>``,
   ``posv<T, N, NRHS, REGULARIZE, CHECK>`` all default the flag to ``false`` and
   guard the extra work behind ``if constexpr`` — so the unflagged instantiation is
   **byte-identical** to the original (no PTX change, no perf cost). This is how the

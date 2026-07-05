@@ -31,6 +31,51 @@ on the rendered source + a digest of the whole header library + the SM, so any
 library edit transparently rebuilds the affected binaries; a cuBLASDx-rejected
 shape is remembered so it isn't retried.
 
+### The `blas2` and `rect` legs (measured + reported, no table yet)
+
+Two additional legs cover what the ladder misses; both are pure-SIMT (no MathDx
+needed), prebuild-cached like the others, and route every verdict through the
+same `tune_pick` margin rule:
+
+- **`blas2`** (`bench/bench_blas2.cu`) — warp-vs-block for `syrk`, `syr2k`,
+  `ldlt`, `ldltsv` (factor+solve), `inv` (augmented `[A|I]` Gauss-Jordan),
+  `trmv`, `ger` over the ladder's square-N set, f32+f64. `inv`/`trmv`/`ger` are
+  block-only (no `warp::` variant); none of these ops has a `glass::nvidia::`
+  counterpart, so there is no vendor column.
+- **`rect`** (`bench/bench_rect.cu`) — warp-vs-block for rectangular `gemv`
+  (tall 64×8/128×16/256×32, wide 8×64/16×128/32×256) and `gemm`
+  ((M,K,N) ∈ {(32,8,32),(8,32,8),(64,16,16),(16,64,16),(6,6,64),(64,6,6)}).
+  The nvidia leg is skipped (rectangular cuBLASDx forcing would need new
+  `DEFINE_NVIDIA_*` instantiation machinery; per-shape vendor decisions belong
+  to the `shapes` leg).
+
+Unlike `ladder`/`shapes`/`reduced`, these legs regenerate **no header table
+yet** — they splice the measured picks into marker-delimited blocks in
+`bench/BLAS2_SWEEP_RESULTS.md` / `bench/RECT_SWEEP_RESULTS.md` (the
+`suggested_backend<>` defaults-table extension for these ops is a follow-up).
+Offline hooks `--from-blas2 <txt>` / `--from-rect <txt>` re-report from an
+existing sweep capture without touching the GPU:
+
+```bash
+python bench/tune.py --sm auto --prebuild --legs blas2,rect  # compile only
+python bench/tune.py --sm auto --legs blas2,rect             # timed — quiet GPU
+python bench/tune.py --legs blas2 --from-blas2 bench/blas2_sweep_<ts>.txt --dry-run
+```
+
+### The `solvers` leg (characterization only)
+
+**`solvers`** (`bench/bench_solvers.cu`) characterizes the solver-level ops:
+`bdsv` vs `pcg` on the identical block-tridiagonal SPD system (the direct-vs-
+iterative crossover — reported with pcg's iteration count, **never auto-picked**,
+because the right choice is conditioning-dependent), `gesv`/`posv`/`inv`+`gemv`
+on one SPD system (pricing the pivoted-LU fallback and the invert-then-multiply
+anti-pattern), and `syev`/`eig_clamp` timing. Because these ops mutate their
+input, the harness restores pristine device copies between reps **outside** the
+`cudaEvent` window (per-launch event timing; see the methodology section of
+`bench/SOLVERS_SWEEP_RESULTS.md`, where the measured block is spliced), and a
+CPU-checked correctness guard per shape aborts on any solver/reference mismatch.
+Prebuild-cached like the other legs; offline hook `--from-solvers <txt>`.
+
 The shared rule (`bench/tune_pick.py::pick`): a dependency-carrying impl
 (`nvidia`/`cublasdx`/`reduced`) wins **only if it beats the simplest impl by more
 than the margin** — otherwise the no-dependency path (always launchable, no

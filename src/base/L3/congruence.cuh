@@ -162,14 +162,14 @@ __device__ void bilinear(T alpha, const T* X, const T* M, const T* Y, T beta, T*
 }
 
 /**
- * @brief Shared-memory element count for `congruence_accum` `s_scratch`.
+ * @brief Scratch size in bytes for `congruence_accum` `s_scratch`.
  *
  * Holds the `Q×P` transpose `Gᵀ` plus the `congruence_sym` scratch (`M·Gᵀ`, also
  * `Q×P`). Total `2*P*Q` elements of `T`.
  */
 template <typename T, uint32_t P, uint32_t Q>
-__host__ __device__ constexpr uint32_t congruence_accum_smem_count() {
-    return 2u * P * Q;
+__host__ __device__ constexpr std::size_t congruence_accum_scratch_bytes() {
+    return 2u * P * Q * sizeof(T);
 }
 
 /**
@@ -194,7 +194,7 @@ __host__ __device__ constexpr uint32_t congruence_accum_smem_count() {
  * @param M       Input `Q×Q` matrix (column-major, symmetric).
  * @param beta    Scalar on the existing `C` (read only when ACCUMULATE).
  * @param C       In/out `P×P` symmetric result (column-major).
- * @param s_scratch  Shared scratch of `congruence_accum_smem_count<T,P,Q>()` elements.
+ * @param s_scratch  Shared scratch of `congruence_accum_scratch_bytes<T,P,Q>()` elements.
  */
 template <typename T, uint32_t P, uint32_t Q,
           bool ACCUMULATE = false, bool TRAILING_SYNC = true>

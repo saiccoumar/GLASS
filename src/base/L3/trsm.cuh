@@ -1,287 +1,203 @@
 #pragma once
 #include "../barrier.cuh"
+#include "../flags.cuh"   // FillMode / Diag
 #include <cstdint>
-#include "chol_InPlace.cuh"  // warp::cholDecomp_InPlace, composed by warp::posv
+#include "potrf.cuh"  // warp::potrf, composed by warp::posv
 
-/**
- * @brief Lower-triangular solve `L x = b` in place via forward substitution (TRSM/TRSV).
- *
- * Solves for `x` given lower-triangular `L` (column-major) and right-hand side
- * `b`, overwriting `b` with the solution. Single-block. SciPy equivalent:
- * `x = scipy.linalg.solve_triangular(L, b, lower=True)`.
- *
- * @tparam T  Scalar type.
- * @param n  Dimension (L is n x n, b has length n).
- * @param L  Lower-triangular matrix (column-major).
- * @param b  In/out right-hand side; on return holds the solution x.
- */
-// Shared body: forward-substitution lower-triangular solve; barrier policy
-// supplies rank/size + the two per-column syncs, shared by glass:: and cgrps::.
-template <typename Bar, typename T>
-__device__ void trsm_impl(Bar bar, uint32_t n, T *L, T *b)
+// ─────────────────────────────────────────────────────────────────────────────
+// trsm — triangular solve with multiple right-hand sides, op(A) X = B, in place
+// (BLAS TRSM, left side, alpha = 1). B is n×nrhs column-major and is
+// overwritten with X. Storage and flag semantics match trsv (see trsv.cuh):
+// FILL names the stored triangle, DIAG the implicit-unit choice, TRANSPOSE
+// solves op(A) = Aᵀ against that same stored triangle.
+//
+// Parallelism: each elimination step resolves all `nrhs` pivots in parallel
+// (thread-strided over columns), then updates the remaining (row, rhs) cells
+// flat-strided over the whole rectangle — so wide B keeps every thread busy
+// even for small n. Two barriers per step, shared across all right-hand sides
+// (vs 2·n·nrhs for nrhs separate trsv calls).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Shared body: barrier policy supplies rank/size + the per-step syncs, shared
+// by glass:: and cgrps::. SizeT/SizeU are deduced: uint32_t from the runtime
+// overload, ct_size<N>/ct_size<NRHS> from the compile-time overload
+// (constant-folds the trip counts and the flat-index %/ by `rows`).
+template <typename Bar, typename T, FillMode FILL, Diag DIAG, bool TRANSPOSE,
+          typename SizeT, typename SizeU>
+__device__ void trsm_impl(Bar bar, SizeT n, SizeU nrhs, const T *A, T *B)
 {
+    static_assert(FILL != FillMode::Full, "trsm: FILL must name a triangle (Lower or Upper)");
+    constexpr bool LOWER   = (FILL == FillMode::Lower);
+    constexpr bool UNIT    = (DIAG == Diag::Unit);
+    constexpr bool FORWARD = (LOWER != TRANSPOSE);   // op(A) lower ⇒ forward sweep
     uint32_t rank = bar.rank(), size = bar.size();
-    for (uint32_t col = 0; col < n; col++) {
-        if (rank == 0) b[col] /= L[col*n + col];
-        bar.sync();
-        T factor = b[col];
-        for (uint32_t row = rank + col + 1; row < n; row += size)
-            b[row] -= L[col*n + row] * factor;
+    for (uint32_t step = 0; step < n; step++) {
+        uint32_t k = FORWARD ? step : (n - 1 - step);
+        // resolve the pivot row across all right-hand sides: B[k,c] /= op(A)[k][k]
+        if (!UNIT) {
+            for (uint32_t c = rank; c < nrhs; c += size)
+                B[k + c * n] /= A[k + k * n];
+            bar.sync();
+        }
+        // eliminate x[k] from the remaining unknowns of every column:
+        //   op(A)[i][k] = TRANSPOSE ? A[k + i*n] : A[i + k*n]
+        uint32_t rows = FORWARD ? (n - 1 - k) : k;       // unknowns still open
+        for (uint32_t flat = rank; flat < rows * nrhs; flat += size) {
+            uint32_t i = FORWARD ? (k + 1 + flat % rows) : (flat % rows);
+            uint32_t c = flat / rows;
+            B[i + c * n] -= (TRANSPOSE ? A[k + i * n] : A[i + k * n]) * B[k + c * n];
+        }
         bar.sync();
     }
 }
 
-// Solve lower-triangular Lx=b in-place (column-major L, result overwrites b)
-template <typename T>
-__device__ void trsm(uint32_t n, T *L, T *b)
+/**
+ * @brief Triangular solve with multiple right-hand sides `op(A) X = B`, in place (TRSM).
+ *
+ * Solves the triangular system for every column of `B` (n×nrhs, column-major),
+ * overwriting `B` with `X`. `A` is `n×n` column-major; only the triangle named
+ * by `FILL` is read. `TRANSPOSE=true` solves `Aᵀ X = B` against that same
+ * stored triangle; `DIAG=Diag::Unit` means an implicit unit diagonal. All
+ * right-hand sides share each elimination step's two barriers, and the update
+ * is flat-strided over the (rows × nrhs) rectangle, so wide `B` keeps every
+ * thread busy even at small `n`. Ends on a barrier (composes cleanly).
+ * SciPy equivalent:
+ * `X = scipy.linalg.solve_triangular(A, B, lower=(FILL==Lower), unit_diagonal=(DIAG==Unit), trans=(1 if TRANSPOSE else 0))`.
+ *
+ * @tparam T     Scalar type.
+ * @tparam FILL  Which triangle of `A` holds the data (default `FillMode::Lower`).
+ * @tparam DIAG  `Diag::Unit` for an implicit unit diagonal (default `Diag::NonUnit`).
+ * @tparam TRANSPOSE  When true solve `Aᵀ X = B` (default false).
+ * @param n     Dimension (`A` is `n×n`; each column of `B` has length `n`).
+ * @param nrhs  Number of right-hand sides (columns of `B`).
+ * @param A     Triangular matrix (column-major; read-only).
+ * @param B     In/out right-hand sides (`n×nrhs`, column-major); on return holds `X`.
+ */
+template <typename T, FillMode FILL = FillMode::Lower, Diag DIAG = Diag::NonUnit, bool TRANSPOSE = false>
+__device__ void trsm(uint32_t n, uint32_t nrhs, const T *A, T *B)
 {
-    trsm_impl<BlockBarrier, T>(BlockBarrier{}, n, L, b);
+    trsm_impl<BlockBarrier, T, FILL, DIAG, TRANSPOSE>(BlockBarrier{}, n, nrhs, A, B);
 }
 
 /**
- * @brief Compile-time-size lower-triangular solve `L x = b` in place (TRSM/TRSV).
+ * @brief Triangular solve with multiple right-hand sides `op(A) X = B`, in place (TRSM), compile-time size.
  *
- * Same as the runtime `trsm` but with the dimension as a template parameter.
- * SciPy equivalent: `x = scipy.linalg.solve_triangular(L, b, lower=True)`.
+ * Same as the runtime `trsm` but with the dimensions as template parameters.
+ * SciPy equivalent:
+ * `X = scipy.linalg.solve_triangular(A, B, lower=(FILL==Lower), unit_diagonal=(DIAG==Unit), trans=(1 if TRANSPOSE else 0))`.
  *
- * @tparam T  Scalar type.
- * @tparam N  Dimension (L is N x N, b has length N).
- * @param L  Lower-triangular matrix (column-major).
- * @param b  In/out right-hand side; on return holds the solution x.
+ * @tparam T     Scalar type.
+ * @tparam N     Dimension (`A` is `N×N`; each column of `B` has length `N`).
+ * @tparam NRHS  Number of right-hand sides (columns of `B`).
+ * @tparam FILL  Which triangle of `A` holds the data (default `FillMode::Lower`).
+ * @tparam DIAG  `Diag::Unit` for an implicit unit diagonal (default `Diag::NonUnit`).
+ * @tparam TRANSPOSE  When true solve `Aᵀ X = B` (default false).
+ * @param A  Triangular matrix (column-major; read-only).
+ * @param B  In/out right-hand sides (`N×NRHS`, column-major); on return holds `X`.
  */
-template <typename T, uint32_t N>
-__device__ void trsm(T *L, T *b)
+template <typename T, uint32_t N, uint32_t NRHS,
+          FillMode FILL = FillMode::Lower, Diag DIAG = Diag::NonUnit, bool TRANSPOSE = false>
+__device__ void trsm(const T *A, T *B)
 {
-    trsm<T>(N, L, b);
+    trsm_impl<BlockBarrier, T, FILL, DIAG, TRANSPOSE>(BlockBarrier{}, ct_size<N>{}, ct_size<NRHS>{}, A, B);
 }
 
 namespace warp {
     /**
-     * @brief Single-warp lower-triangular solve `L x = b` (forward substitution), compile-time size.
+     * @brief Single-warp triangular solve `op(A) x = b` in place (TRSV), compile-time size.
      *
-     * One 32-lane warp solves `L x = b` in place (column-major lower-triangular `L`),
-     * overwriting `b`. For warp-per-problem solvers; pairs with `warp::trsm_transpose`
-     * to solve an SPD system from its Cholesky factor. No `__syncthreads`. SciPy:
-     * `x = scipy.linalg.solve_triangular(L, b, lower=True)`.
-     *
-     * @tparam T  Scalar type.
-     * @tparam N  Dimension (L is N x N, b has length N).
-     * @param L  Lower-triangular matrix (column-major).
-     * @param b  In/out right-hand side; on return holds the solution x.
-     */
-    template <typename T, uint32_t N>
-    __device__ void trsm(T *L, T *b)
-    {
-        uint32_t lane = (threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y) & 31;
-        for (uint32_t col = 0; col < N; col++) {
-            T factor = static_cast<T>(0);
-            if (lane == 0) { factor = b[col] / L[col*N + col]; b[col] = factor; }
-            // broadcast from lane 0's register (not a shared re-read of b[col]) — see the note
-            // in warp::cholDecomp_InPlace; immune to the nvcc __restrict__ stale-cache miscompile.
-            factor = __shfl_sync(0xffffffffu, factor, 0);
-            for (uint32_t row = lane + col + 1; row < N; row += 32)
-                b[row] -= L[col*N + row] * factor;
-            __syncwarp();
-        }
-    }
-
-    /**
-     * @brief Single-warp transpose-triangular solve `Lᵀ x = b` (back substitution), compile-time size.
-     *
-     * One 32-lane warp solves `Lᵀ x = b` in place given a lower-triangular `L`
-     * (column-major), overwriting `b`. Together with `warp::trsm` this solves an SPD
-     * system `A x = b` from `A = L Lᵀ`: factor with `warp::cholDecomp_InPlace`, then
-     * `warp::trsm` (forward) then `warp::trsm_transpose` (back). No `__syncthreads`.
-     * SciPy: `x = scipy.linalg.solve_triangular(L.T, b, lower=False)`.
-     *
-     * @tparam T  Scalar type.
-     * @tparam N  Dimension (L is N x N, b has length N).
-     * @param L  Lower-triangular matrix (column-major); `Lᵀ` is used implicitly.
-     * @param b  In/out right-hand side; on return holds the solution x.
-     */
-    template <typename T, uint32_t N>
-    __device__ void trsm_transpose(T *L, T *b)
-    {
-        uint32_t lane = (threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y) & 31;
-        for (int32_t col = (int32_t)N - 1; col >= 0; col--) {
-            T factor = static_cast<T>(0);
-            if (lane == 0) { factor = b[col] / L[col*N + col]; b[col] = factor; }
-            // broadcast from lane 0's register (not a shared re-read of b[col]); immune to the
-            // nvcc __restrict__ stale-cache miscompile — see warp::cholDecomp_InPlace.
-            factor = __shfl_sync(0xffffffffu, factor, 0);
-            // eliminate x[col] from rows i < col:  b[i] -= (Lᵀ)_{i,col} x[col] = L_{col,i} x[col]
-            for (uint32_t i = lane; i < (uint32_t)col; i += 32)
-                b[i] -= L[i*N + col] * factor;
-            __syncwarp();
-        }
-    }
-
-    // ── NEW upper-stored single-warp triangular solves (own warp impls) ──────────
-    // These mirror warp::trsm / warp::trsm_transpose but for an UPPER-stored
-    // triangular matrix U (column-major; only the upper triangle is read). They are
-    // self-contained warp implementations — they do NOT depend on the block trsv:
-    // warp and block can't share an impl (`__shfl`/`__syncwarp` vs `__syncthreads`).
-    // Every pivot is broadcast from lane 0's REGISTER via `__shfl_sync` (never a
-    // shared re-read of b[col]), immune to the nvcc __restrict__ stale-cache
-    // miscompile (see warp::cholDecomp_InPlace). The `UNIT` flag skips the diagonal
-    // divide (implicit unit diagonal).
-
-    /**
-     * @brief Single-warp upper-triangular solve `U x = b` (back substitution), compile-time size.
-     *
-     * One 32-lane warp solves `U x = b` in place given an upper-triangular `U`
-     * (column-major, only the upper triangle read), overwriting `b`. Back
-     * substitution from the last unknown. The pivot is broadcast from lane 0's
-     * register; no shared scratch, no `__syncthreads`. With `UNIT=true` the diagonal
-     * is treated as all ones (not read). SciPy:
-     * `x = scipy.linalg.solve_triangular(U, b, lower=False)`.
+     * One 32-lane warp solves the triangular system for any `{FILL, DIAG,
+     * TRANSPOSE}` combination, overwriting `b` with `x`. `A` is column-major and
+     * only the triangle named by `FILL` is read; `TRANSPOSE=true` solves
+     * `Aᵀx = b` against that same stored triangle; `DIAG=Diag::Unit` skips the
+     * diagonal divide. Every pivot is broadcast from lane 0's REGISTER via
+     * `__shfl_sync` (never a shared re-read of `b[k]`) — immune to the nvcc
+     * `__restrict__` stale-cache miscompile (see `warp::potrf`). This is its OWN
+     * warp implementation (warp and block can't share an impl:
+     * `__shfl`/`__syncwarp` vs `__syncthreads`). No shared scratch, no
+     * `__syncthreads`. SciPy:
+     * `x = scipy.linalg.solve_triangular(A, b, lower=(FILL==Lower), unit_diagonal=(DIAG==Unit), trans=(1 if TRANSPOSE else 0))`.
      *
      * @tparam T     Scalar type.
-     * @tparam N     Dimension (U is N x N, b has length N).
-     * @tparam UNIT  When true, `U` has an implicit unit diagonal (diagonal not read).
-     * @param U  Upper-triangular matrix (column-major).
+     * @tparam N     Dimension (`A` is `N×N`, `b` has length `N`).
+     * @tparam FILL  Which triangle of `A` holds the data (default `FillMode::Lower`).
+     * @tparam DIAG  `Diag::Unit` for an implicit unit diagonal (default `Diag::NonUnit`).
+     * @tparam TRANSPOSE  When true solve `Aᵀx = b` (default false).
+     * @param A  Triangular matrix (column-major); only the `FILL` triangle read.
      * @param b  In/out right-hand side; on return holds the solution x.
      */
-    template <typename T, uint32_t N, bool UNIT = false>
-    __device__ void trsm_upper(T *U, T *b)
+    template <typename T, uint32_t N, FillMode FILL = FillMode::Lower, Diag DIAG = Diag::NonUnit, bool TRANSPOSE = false>
+    __device__ void trsv(const T *A, T *b)
     {
+        static_assert(FILL != FillMode::Full, "warp::trsv: FILL must name a triangle (Lower or Upper)");
+        constexpr bool LOWER   = (FILL == FillMode::Lower);
+        constexpr bool UNIT    = (DIAG == Diag::Unit);
+        constexpr bool FORWARD = (LOWER != TRANSPOSE);   // op(A) lower ⇒ forward sweep
         uint32_t lane = (threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y) & 31;
-        for (int32_t col = (int32_t)N - 1; col >= 0; col--) {
+        for (uint32_t step = 0; step < N; step++) {
+            uint32_t k = FORWARD ? step : (N - 1 - step);
+            // resolve pivot on lane 0's register, then broadcast (§1g) — never a
+            // shared re-read of b[k] on the consuming lanes.
             T factor = static_cast<T>(0);
             if (lane == 0) {
-                factor = UNIT ? b[col] : (b[col] / U[col*N + col]);
-                b[col] = factor;
+                factor = UNIT ? b[k] : (b[k] / A[k + k * N]);
+                b[k] = factor;
             }
             factor = __shfl_sync(0xffffffffu, factor, 0);
-            // eliminate x[col] from rows i < col:  b[i] -= U_{i,col} x[col]
-            for (uint32_t i = lane; i < (uint32_t)col; i += 32)
-                b[i] -= U[col*N + i] * factor;
+            // eliminate x[k]: op(A)[i][k] = TRANSPOSE ? A[k + i*N] : A[i + k*N]
+            if constexpr (FORWARD) {
+                for (uint32_t i = lane + k + 1; i < N; i += 32)
+                    b[i] -= (TRANSPOSE ? A[k + i * N] : A[i + k * N]) * factor;
+            } else {
+                for (uint32_t i = lane; i < k; i += 32)
+                    b[i] -= (TRANSPOSE ? A[k + i * N] : A[i + k * N]) * factor;
+            }
             __syncwarp();
         }
     }
 
     /**
-     * @brief Single-warp transpose upper-triangular solve `Uᵀ x = b` (forward substitution), compile-time size.
+     * @brief Single-warp triangular solve with multiple right-hand sides `op(A) X = B` (TRSM), compile-time size.
      *
-     * One 32-lane warp solves `Uᵀ x = b` in place given an upper-triangular `U`
-     * (column-major; `Uᵀ` is lower-triangular, used implicitly), overwriting `b`.
-     * Forward substitution from the first unknown. The pivot is broadcast from
-     * lane 0's register; no shared scratch, no `__syncthreads`. With `UNIT=true` the
-     * diagonal is treated as all ones (not read). SciPy:
-     * `x = scipy.linalg.solve_triangular(U.T, b, lower=True)`.
+     * Warp-per-problem parity with the block `glass::trsm`: one 32-lane warp
+     * solves all `NRHS` columns of `B` (`N×NRHS`, column-major) in place. Each
+     * elimination step resolves the pivot row across all columns (lane-strided)
+     * and flat-strides the update over the (rows × NRHS) rectangle, sharing the
+     * per-step `__syncwarp()` across every right-hand side. No shared scratch,
+     * no `__syncthreads`.
      *
      * @tparam T     Scalar type.
-     * @tparam N     Dimension (U is N x N, b has length N).
-     * @tparam UNIT  When true, `U` has an implicit unit diagonal (diagonal not read).
-     * @param U  Upper-triangular matrix (column-major); `Uᵀ` is used implicitly.
-     * @param b  In/out right-hand side; on return holds the solution x.
+     * @tparam N     Dimension (`A` is `N×N`; each column of `B` has length `N`).
+     * @tparam NRHS  Number of right-hand sides (columns of `B`).
+     * @tparam FILL  Which triangle of `A` holds the data (default `FillMode::Lower`).
+     * @tparam DIAG  `Diag::Unit` for an implicit unit diagonal (default `Diag::NonUnit`).
+     * @tparam TRANSPOSE  When true solve `Aᵀ X = B` (default false).
+     * @param A  Triangular matrix (column-major; read-only).
+     * @param B  In/out right-hand sides (`N×NRHS`, column-major); on return holds `X`.
      */
-    template <typename T, uint32_t N, bool UNIT = false>
-    __device__ void trsm_upper_transpose(T *U, T *b)
+    template <typename T, uint32_t N, uint32_t NRHS,
+              FillMode FILL = FillMode::Lower, Diag DIAG = Diag::NonUnit, bool TRANSPOSE = false>
+    __device__ void trsm(const T *A, T *B)
     {
+        static_assert(FILL != FillMode::Full, "warp::trsm: FILL must name a triangle (Lower or Upper)");
+        constexpr bool LOWER   = (FILL == FillMode::Lower);
+        constexpr bool UNIT    = (DIAG == Diag::Unit);
+        constexpr bool FORWARD = (LOWER != TRANSPOSE);
         uint32_t lane = (threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y) & 31;
-        for (uint32_t col = 0; col < N; col++) {
-            T factor = static_cast<T>(0);
-            if (lane == 0) {
-                factor = UNIT ? b[col] : (b[col] / U[col*N + col]);
-                b[col] = factor;
+        for (uint32_t step = 0; step < N; step++) {
+            uint32_t k = FORWARD ? step : (N - 1 - step);
+            if constexpr (!UNIT) {
+                for (uint32_t c = lane; c < NRHS; c += 32)
+                    B[k + c * N] /= A[k + k * N];
+                __syncwarp();
             }
-            factor = __shfl_sync(0xffffffffu, factor, 0);
-            // eliminate x[col] from rows i > col:  b[i] -= (Uᵀ)_{i,col} x[col] = U_{col,i} x[col]
-            for (uint32_t i = lane + col + 1; i < N; i += 32)
-                b[i] -= U[i*N + col] * factor;
+            uint32_t rows = FORWARD ? (N - 1 - k) : k;
+            for (uint32_t flat = lane; flat < rows * NRHS; flat += 32) {
+                uint32_t i = FORWARD ? (k + 1 + flat % rows) : (flat % rows);
+                uint32_t c = flat / rows;
+                B[i + c * N] -= (TRANSPOSE ? A[k + i * N] : A[i + k * N]) * B[k + c * N];
+            }
             __syncwarp();
-        }
-    }
-
-    // ── unit-diagonal lower variants (the existing warp::trsm/trsm_transpose are
-    //    non-unit only); needed so trsv can offer the full {LOWER,UNIT,TRANSPOSE} matrix.
-    /**
-     * @brief Single-warp unit-lower solve `L x = b` (forward substitution), compile-time size.
-     *
-     * Like `warp::trsm` but with an implicit unit diagonal (the diagonal of `L` is
-     * not read). One 32-lane warp, pivot broadcast from a register, no shared
-     * scratch, no `__syncthreads`. SciPy:
-     * `x = scipy.linalg.solve_triangular(L, b, lower=True, unit_diagonal=True)`.
-     *
-     * @tparam T  Scalar type.
-     * @tparam N  Dimension (L is N x N, b has length N).
-     * @param L  Lower-triangular matrix (column-major), unit diagonal assumed.
-     * @param b  In/out right-hand side; on return holds the solution x.
-     */
-    template <typename T, uint32_t N>
-    __device__ void trsm_unit(T *L, T *b)
-    {
-        uint32_t lane = (threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y) & 31;
-        for (uint32_t col = 0; col < N; col++) {
-            // unit diag: x[col] = b[col] (no divide). Read on lane 0's register then
-            // broadcast (§1g), never a shared re-read on the consuming lanes.
-            T factor = static_cast<T>(0);
-            if (lane == 0) factor = b[col];
-            factor = __shfl_sync(0xffffffffu, factor, 0);
-            for (uint32_t row = lane + col + 1; row < N; row += 32)
-                b[row] -= L[col*N + row] * factor;
-            __syncwarp();
-        }
-    }
-
-    /**
-     * @brief Single-warp unit-lower transpose solve `Lᵀ x = b` (back substitution), compile-time size.
-     *
-     * Like `warp::trsm_transpose` but with an implicit unit diagonal. One 32-lane
-     * warp, pivot broadcast from a register, no shared scratch, no `__syncthreads`.
-     * SciPy: `x = scipy.linalg.solve_triangular(L.T, b, lower=False, unit_diagonal=True)`.
-     *
-     * @tparam T  Scalar type.
-     * @tparam N  Dimension (L is N x N, b has length N).
-     * @param L  Lower-triangular matrix (column-major), unit diagonal assumed; `Lᵀ` used implicitly.
-     * @param b  In/out right-hand side; on return holds the solution x.
-     */
-    template <typename T, uint32_t N>
-    __device__ void trsm_transpose_unit(T *L, T *b)
-    {
-        uint32_t lane = (threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y) & 31;
-        for (int32_t col = (int32_t)N - 1; col >= 0; col--) {
-            // unit diag: x[col] = b[col] (no divide). Broadcast from lane 0's
-            // register (§1g), never a shared re-read on the consuming lanes.
-            T factor = static_cast<T>(0);
-            if (lane == 0) factor = b[col];
-            factor = __shfl_sync(0xffffffffu, factor, 0);
-            for (uint32_t i = lane; i < (uint32_t)col; i += 32)
-                b[i] -= L[i*N + col] * factor;
-            __syncwarp();
-        }
-    }
-
-    /**
-     * @brief Single-warp triangular solve `op(A) x = b` (TRSV), flagged dispatch, compile-time size.
-     *
-     * Thin compile-time-flagged wrapper selecting the right single-warp triangular
-     * solve for any `{LOWER, UNIT, TRANSPOSE}` combination, dispatching to the lower
-     * `warp::trsm`/`warp::trsm_transpose` (and their unit-diagonal twins) or the
-     * upper `warp::trsm_upper`/`warp::trsm_upper_transpose`. Solves in place
-     * (`b` overwritten with `x`); `A` is column-major and only the named triangle is
-     * read. One 32-lane warp, no shared scratch, no `__syncthreads`; this is its OWN
-     * warp implementation and does not share an impl with the block trsv. SciPy:
-     * `x = scipy.linalg.solve_triangular(A, b, lower=LOWER, trans=TRANSPOSE, unit_diagonal=UNIT)`.
-     *
-     * @tparam T      Scalar type.
-     * @tparam N      Dimension (A is N x N, b has length N).
-     * @tparam LOWER  When true, `A` is lower-triangular (default true); else upper.
-     * @tparam UNIT   When true, `A` has an implicit unit diagonal (default false).
-     * @tparam TRANSPOSE  When true, solve `Aᵀ x = b` instead of `A x = b` (default false).
-     * @param A  Triangular matrix (column-major); only the `LOWER`/upper triangle read.
-     * @param b  In/out right-hand side; on return holds the solution x.
-     */
-    template <typename T, uint32_t N, bool LOWER = true, bool UNIT = false, bool TRANSPOSE = false>
-    __device__ void trsv(T *A, T *b)
-    {
-        if (LOWER) {
-            if (!TRANSPOSE) { if (UNIT) trsm_unit<T, N>(A, b);           else trsm<T, N>(A, b); }
-            else        { if (UNIT) trsm_transpose_unit<T, N>(A, b); else trsm_transpose<T, N>(A, b); }
-        } else {
-            if (!TRANSPOSE) trsm_upper<T, N, UNIT>(A, b);
-            else        trsm_upper_transpose<T, N, UNIT>(A, b);
         }
     }
 
@@ -289,14 +205,13 @@ namespace warp {
      * @brief Single-warp SPD solve `A x = b` via Cholesky (LAPACK posv), compile-time size.
      *
      * One 32-lane warp solves the symmetric-positive-definite system `A x = b` in
-     * place: it factors `A = L Lᵀ` with `warp::cholDecomp_InPlace` (lower triangle
-     * overwrites `A`), then a forward solve `L y = b` (`trsv<…,LOWER,!TRANSPOSE>`) and a
-     * back solve `Lᵀ x = y` (`trsv<…,LOWER,TRANSPOSE>`). On return `b` holds `x` and the
-     * lower triangle of `A` holds `L`. This is the composed warp-per-problem solve —
-     * the proof that the warp L1/L2/L3 glue closes the gap. No shared scratch, no
-     * `__syncthreads`; every pivot broadcast from a register (§1g). `A` must be SPD
-     * (use `double` for ill-conditioned systems). NumPy equivalent:
-     * `x = np.linalg.solve(A, b)`.
+     * place: it factors `A = L Lᵀ` with `warp::potrf` (lower triangle
+     * overwrites `A`), then a forward solve `L y = b` and a back solve `Lᵀ x = y`
+     * (both `warp::trsv`). On return `b` holds `x` and the lower triangle of `A`
+     * holds `L`. This is the composed warp-per-problem solve — the proof that the
+     * warp L1/L2/L3 glue closes the gap. No shared scratch, no `__syncthreads`;
+     * every pivot broadcast from a register (§1g). `A` must be SPD (use `double`
+     * for ill-conditioned systems). NumPy equivalent: `x = np.linalg.solve(A, b)`.
      *
      * @tparam T  Scalar type.
      * @tparam N  Dimension (A is N x N, b has length N).
@@ -306,9 +221,9 @@ namespace warp {
     template <typename T, uint32_t N>
     __device__ void posv(T *A, T *b)
     {
-        cholDecomp_InPlace<T, N>(A);
-        trsv<T, N, /*LOWER=*/true, /*UNIT=*/false, /*TRANSPOSE=*/false>(A, b);  // forward: L y = b
-        trsv<T, N, /*LOWER=*/true, /*UNIT=*/false, /*TRANSPOSE=*/true>(A, b);   // back:   Lᵀ x = y
+        potrf<T, N>(A);
+        trsv<T, N>(A, b);                                                        // forward: L y = b
+        trsv<T, N, FillMode::Lower, Diag::NonUnit, /*TRANSPOSE=*/true>(A, b);    // back:   Lᵀ x = y
     }
 
     /**
@@ -318,8 +233,8 @@ namespace warp {
      * (Marquardt), `REG_DIAG=true` adds `rho·diag(A)` (Levenberg). Trailing
      * `__syncwarp()` so the shifted A is warp-visible before factoring. Internal.
      */
-    template <typename T, bool REG_DIAG = false>
-    __device__ void _posv_regularize(uint32_t n, T *A, T rho)
+    template <typename T, bool REG_DIAG = false, typename SizeT>
+    __device__ void _posv_regularize(SizeT n, T *A, T rho)
     {
         uint32_t lane = (threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y) & 31;
         for (uint32_t i = lane; i < n; i += 32) {
@@ -334,9 +249,9 @@ namespace warp {
      *
      * Warp-per-problem parity with the block multi-RHS `glass::posv`: one 32-lane
      * warp optionally shifts `A`'s diagonal (`REGULARIZE`: `rho·I`, or `rho·diag(A)`
-     * when `REG_DIAG`), factors `A = L Lᵀ` via `warp::cholDecomp_InPlace<…,CHECK>`
-     * (reporting a non-PD pivot through `s_fail`), then forward/back-solves each of
-     * the `NRHS` columns of `B` (column-major, column `c` at `B + c*N`). On return
+     * when `REG_DIAG`), factors `A = L Lᵀ` via `warp::potrf<…,CHECK>`
+     * (reporting a non-PD pivot through `s_fail`), then forward/back-solves all
+     * `NRHS` columns of `B` at once with the multi-RHS `warp::trsm`. On return
      * `A` holds `L` and `B` holds `X`. No shared scratch, no `__syncthreads`.
      *
      * A flagged **single**-RHS solve is just NRHS=1 — the form HJCD's LM step wants:
@@ -360,12 +275,12 @@ namespace warp {
               bool REGULARIZE = false, bool CHECK = false, bool REG_DIAG = false>
     __device__ void posv(T *A, T *B, T rho = T(0), int *s_fail = nullptr)
     {
-        if constexpr (REGULARIZE) _posv_regularize<T, REG_DIAG>(N, A, rho);  // rho*I or rho*diag(A)
-        cholDecomp_InPlace<T, N, CHECK>(A, s_fail);
-        for (uint32_t c = 0; c < NRHS; c++) {
-            T *Bc = B + c * N;                                              // column c (column-major)
-            trsv<T, N, /*LOWER=*/true, /*UNIT=*/false, /*TRANSPOSE=*/false>(A, Bc);  // forward: L y = b
-            trsv<T, N, /*LOWER=*/true, /*UNIT=*/false, /*TRANSPOSE=*/true>(A, Bc);   // back:   Lᵀ x = y
-        }
+        // Qualified: ct_size's home namespace is glass, so an unqualified call
+        // would ADL-pull the block-scoped glass::_posv_regularize into the
+        // overload set and be ambiguous with this warp-scoped one.
+        if constexpr (REGULARIZE) warp::_posv_regularize<T, REG_DIAG>(ct_size<N>{}, A, rho);  // rho*I or rho*diag(A)
+        potrf<T, N, CHECK>(A, s_fail);
+        trsm<T, N, NRHS>(A, B);                                                        // forward: L Y = B
+        trsm<T, N, NRHS, FillMode::Lower, Diag::NonUnit, /*TRANSPOSE=*/true>(A, B);    // back:   Lᵀ X = Y
     }
 }

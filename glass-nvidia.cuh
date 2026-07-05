@@ -41,7 +41,7 @@
 #endif
 #endif
 
-// cuSOLVERDx detection (for L3 LAPACK wrappers: cholDecomp_InPlace, trsm).
+// cuSOLVERDx detection (for L3 LAPACK wrappers: potrf, trsm).
 // Both cusolverdx.hpp AND cusolverdx_io.hpp are required at GLOBAL scope so
 // their symbols don't get nested inside `namespace glass::nvidia` when
 // lapack.cuh is included below.
@@ -241,7 +241,7 @@ namespace nvidia {
 #endif // GLASS_HAVE_CUBLASDX
 
 #if GLASS_HAVE_CUSOLVERDX
-    // LAPACK: cuSOLVERDx-backed cholDecomp_InPlace + trsm
+    // LAPACK: cuSOLVERDx-backed potrf + trsm
     // (primary templates + DEFINE_NVIDIA_CHOL* / DEFINE_NVIDIA_TRSM* macros)
     #include "./src/nvidia/lapack.cuh"
 #endif // GLASS_HAVE_CUSOLVERDX

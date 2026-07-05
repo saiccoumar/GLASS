@@ -24,11 +24,14 @@ build. For the full API surface and the backend-choice guide, read that README.
 | [`04_cgrps.cu`](04_cgrps.cu) | the **cooperative-groups** variant `glass::cgrps::gemm` (whole-block or warp-tile) | pure SIMT — no extra deps |
 | [`05_gemm_dispatch.cu`](05_gemm_dispatch.cu) | `glass::gemm_dispatch` + dynamic shared memory via the `glass_gemm_dispatch_smem` host helper (tiled path) | pure SIMT — no extra deps |
 | [`06_nvidia_gemm.cu`](06_nvidia_gemm.cu) | the cuBLASDx-backed `glass::nvidia::gemm` path | **requires NVIDIA MathDx** |
-| [`07_warp_ops.cu`](07_warp_ops.cu) | single-warp `glass::warp::` ops (`reduce`, 4×4 `gemm`, SPD `cholDecomp_InPlace`+`trsm`+`trsm_transpose`), launched `<<<1,32>>>` | pure SIMT — no extra deps |
+| [`07_warp_ops.cu`](07_warp_ops.cu) | single-warp `glass::warp::` ops (`reduce`, 4×4 `gemm`, SPD `potrf`+`trsm`+`trsm_transpose`), launched `<<<1,32>>>` | pure SIMT — no extra deps |
 | [`08_pcg_solve.cu`](08_pcg_solve.cu) | block-tridiagonal PCG solve `glass::pcg` (`[L\|D\|R]` strips, padded vectors, block-Jacobi preconditioner) | pure SIMT — no extra deps |
 | [`09_backend_picker.cu`](09_backend_picker.cu) | choose a backend + launch config with `glass-defaults.cuh` (`suggested_backend` / `suggested_block_threads` / `suggested_warps_per_block`), then dispatch a real SPD solve to the picked launch | pure SIMT — no extra deps |
+| [`14_ldlt_solve.cu`](14_ldlt_solve.cu) | symmetric-**indefinite** solve `ldlt` + `ldlt_solve` (no Cholesky exists), plus the `CHECK=true` failure-flag + **inertia** reporting on a good and a zero-pivot matrix (`ldlt_scratch_bytes`) | pure SIMT — no extra deps |
+| [`15_riccati_gain.cu`](15_riccati_gain.cu) | LQR feedback gain `K = (R + BᵀPB)⁻¹(BᵀPA)` via `riccati_gain`, dynamic smem sized by `riccati_scratch_bytes<T,NX,NU>()`, verified against a plain-loop CPU reference | pure SIMT — no extra deps |
+| [`16_inv.cu`](16_inv.cu) | matrix inversion on the augmented `[A \| I]` layout: `inv` (+ `inv_scratch_bytes`), and the robust `inv_pivoted` recovering a matrix with a zero leading pivot that plain `inv` sends non-finite | pure SIMT — no extra deps |
 
-**Examples 01–05, 07 and 08 are pure SIMT** — they build with plain `nvcc` and
+**Examples 01–05 and 07–16 are pure SIMT** — they build with plain `nvcc` and
 need no external libraries. **Only `06_nvidia_gemm.cu` needs MathDx** (cuBLASDx);
 skip it if you don't have MathDx installed.
 
@@ -40,7 +43,7 @@ below use `-I..` so the relative `#include "glass.cuh"` resolves from this
 that matches your GPU (`sm_75` Turing, `sm_86` Ampere, `sm_89` Ada, `sm_120`
 Blackwell, …).
 
-### Pure-SIMT examples (01–05)
+### Pure-SIMT examples (all but 06)
 
 ```bash
 nvcc -std=c++17 -arch=sm_75 -I.. 01_axpy_simt.cu    -o axpy     && ./axpy
@@ -51,6 +54,13 @@ nvcc -std=c++17 -arch=sm_75 -I.. 05_gemm_dispatch.cu -o dispatch && ./dispatch
 nvcc -std=c++17 -arch=sm_75 -I.. 07_warp_ops.cu     -o warp_ops && ./warp_ops
 nvcc -std=c++17 -arch=sm_75 -I.. 08_pcg_solve.cu    -o pcg      && ./pcg
 nvcc -std=c++17 -arch=sm_75 -I.. 09_backend_picker.cu -o picker  && ./picker
+nvcc -std=c++17 -arch=sm_75 -I.. 10_gemm_basics.cu  -o gemm_basics && ./gemm_basics
+nvcc -std=c++17 -arch=sm_75 -I.. 11_rowmajor_is_transpose.cu -o rmt && ./rmt
+nvcc -std=c++17 -arch=sm_75 -I.. 12_nrm2.cu         -o nrm2     && ./nrm2
+nvcc -std=c++17 -arch=sm_75 -I.. 13_gemm_strided.cu -o gemm_strided && ./gemm_strided
+nvcc -std=c++17 -arch=sm_75 -I.. 14_ldlt_solve.cu   -o ldlt     && ./ldlt
+nvcc -std=c++17 -arch=sm_75 -I.. 15_riccati_gain.cu -o riccati  && ./riccati
+nvcc -std=c++17 -arch=sm_75 -I.. 16_inv.cu          -o inv      && ./inv
 ```
 
 ### NVIDIA / cuBLASDx example (06) — requires MathDx
@@ -79,7 +89,7 @@ The MathDx-specific flags:
 | `-I$MATHDX_ROOT/include` | cuBLASDx headers |
 | `-I$MATHDX_ROOT/external/cutlass/include` | CUTLASS headers cuBLASDx depends on |
 
-> The cuSOLVERDx (LAPACK: `cholDecomp_InPlace` / `posv` / `gels` / …) path is **not**
+> The cuSOLVERDx (LAPACK: `potrf` / `posv` / `gels` / …) path is **not**
 > covered by these examples — it additionally requires linking a precompiled
 > device library (`-rdc=true -dlto -L$MATHDX_ROOT/lib -lcusolverdx -lcublas
 > -lcusolver -lcudart`). See the top-level README section 5e and

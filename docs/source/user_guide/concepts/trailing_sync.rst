@@ -53,8 +53,8 @@ never gated** — only the final trailing barrier is.
 
 Documented exceptions (the flag is intentionally absent):
 
-* **Algorithm-terminated-by-a-barrier ops** — ``cholDecomp_InPlace`` /
-  ``invertMatrix`` / ``trsm`` / ``trsv`` / ``posv`` / ``ldlt``. Their final step is
+* **Algorithm-terminated-by-a-barrier ops** — ``potrf`` /
+  ``inv`` / ``trsm`` / ``trsv`` / ``posv`` / ``ldlt``. Their final step is
   *itself* a barrier inside the factorization loop, so there is no separable
   trailing barrier to gate; they always end synced.
 * **``glass::warp::`` lockstep ops** — a single warp runs in lockstep, so a trailing
