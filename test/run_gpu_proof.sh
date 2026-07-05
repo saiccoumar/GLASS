@@ -21,9 +21,14 @@ $PY -m pip install -q -e test/pytest-gpu-proof
 # (8x test_l3 "cg kernel covers the default-flag path only", 2x test_getrf
 # "zero leading pivot is singular at n=1"). They are recorded in the receipt;
 # the CI verify step passes --allow-skipped and prints them for inspection.
+# --gpu-proof-github-user: the signer must be the human KEYHOLDER, not the
+# repo owner — the plugin's default derives from the origin remote, which for
+# org-owned repos yields the org (A2R-Lab) and orgs have no SSH keys.
+# (Auto-deriving the keyholder is a pytest-gpu-proof follow-up.)
 $PY -m pytest test/ -q "$@" \
     --gpu-proof-enable \
     --gpu-proof-out test/gpu-proof.json \
+    --gpu-proof-github-user plancherb1 \
     --gpu-proof-fingerprint-paths "glass.cuh,glass-cgrps.cuh,glass-nvidia.cuh,glass-defaults.cuh,src,test/cuda,test/conftest.py"
 
 echo
