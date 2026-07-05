@@ -14,6 +14,11 @@ import tempfile
 
 import pytest
 
+# The pytest-gpu-proof submodule ships its own test tree (plugin dev tests with
+# a pytester conftest); it is not part of GLASS's suite and its conftest would
+# shadow this one. Excluded at collection so plain `pytest test/` just works.
+collect_ignore = ["pytest-gpu-proof"]
+
 # ─── paths ────────────────────────────────────────────────────────────────────
 
 TEST_DIR  = pathlib.Path(__file__).parent
