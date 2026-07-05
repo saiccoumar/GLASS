@@ -18,9 +18,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install CUDA toolkit (nvcc only, no GPU needed)
-        uses: Jimver/cuda-toolkit@v0.2.19
+        uses: Jimver/cuda-toolkit@v0.2.35
         with:
-          cuda: '12.8.1'
+          cuda: '13.2.0'
           method: network
           sub-packages: '["nvcc"]'
 
