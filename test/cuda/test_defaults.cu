@@ -11,9 +11,10 @@ using glass::op; using glass::backend;
 namespace gd = glass::defaults;
 
 // ── measured sm_120 ladder (the ideal tier, independent of what's linked) ──
-//   gemm f32: warp<=8, block@12, nvidia 16..64, block>=96
+//   gemm f32: warp<=16, block@24, nvidia 32..64, block>=96 (2026-07-04 retune)
 static_assert(gd::ideal_sm120(op::gemm, 8,  false) == backend::warp,   "gemm8 f32");
-static_assert(gd::ideal_sm120(op::gemm, 12, false) == backend::block,  "gemm12 f32");
+static_assert(gd::ideal_sm120(op::gemm, 12, false) == backend::warp,   "gemm12 f32");
+static_assert(gd::ideal_sm120(op::gemm, 24, false) == backend::block,  "gemm24 f32");
 static_assert(gd::ideal_sm120(op::gemm, 32, false) == backend::nvidia, "gemm32 f32");
 static_assert(gd::ideal_sm120(op::gemm, 96, false) == backend::block,  "gemm96 f32 (smem cap)");
 //   chol f32: warp<=12, nvidia>=16 (through 128)
