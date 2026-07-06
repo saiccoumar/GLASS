@@ -8,7 +8,13 @@
 //   posv   A x = b (nrhs=1, in place)  glass::posv<T,N>              vs potrfBatched + potrsBatched
 //
 // Contenders per (op, N, B): glass block (TB ∈ {32,128}), glass warp
-// (WPB=8, gemm/potrf only — no warp posv in the library), vendor host-batched.
+// (WPB=8, gemm/potrf only — no warp posv in the library), vendor host-batched,
+// and vendor_tf32 (gemm f32 only): the SAME strided-batched call on a handle
+// with CUBLAS_TF32_TENSOR_OP_MATH — i.e. the vendor's best with tensor cores
+// ALLOWED at relaxed numerics (cuBLAS heuristics still pick the kernel; there
+// is no TF32 Cholesky in cuSOLVER, which is itself a paper point). Its
+// correctness CHECK line is REPORT-ONLY: the maxerr vs the double reference
+// IS the measured TF32 rounding cost (sanity-bounded at 0.1, never eps-tight).
 //
 // THROUGHPUT PROTOCOL (mirrors bench_solvers.cu): B independent problems in
 // global memory; each rep = ONE launch / ONE host API chain spanning all B,
@@ -227,7 +233,7 @@ static double time_thru_ns_per_prob(int B, const std::function<void()>& restore,
 }
 
 // ─── per-(dtype, N) driver ───────────────────────────────────────────────────
-struct Handles { cublasHandle_t cb; cusolverDnHandle_t cs; };
+struct Handles { cublasHandle_t cb; cublasHandle_t cb_tf32; cusolverDnHandle_t cs; };
 
 template <typename T>
 static double upload_and_maxerr(const T* d_out, const double* ref, int cnt, bool lower_only, int n) {
@@ -319,6 +325,11 @@ static void run_for_N(Handles H, const char* dt, bool do_thru, bool do_lat) {
         CK(cudaMemset(dC, 0, MM*B*sizeof(T)));
         xgemm_sb(H.cb, N, (T)1, dA, MM, dB, MM, (T)0, dC, MM, B); CK(cudaDeviceSynchronize());
         check_or_die("gemm", dt, N, "vendor", upload_and_maxerr(dC, refC.data(), MM, false, N), tol);
+        if (sizeof(T) == 4) {   // TF32 rounding cost — recorded, sanity-bounded only
+            CK(cudaMemset(dC, 0, MM*B*sizeof(T)));
+            xgemm_sb(H.cb_tf32, N, (T)1, dA, MM, dB, MM, (T)0, dC, MM, B); CK(cudaDeviceSynchronize());
+            check_or_die("gemm", dt, N, "vendor_tf32", upload_and_maxerr(dC, refC.data(), MM, false, N), 0.1);
+        }
 
         // potrf
         restoreS(); k_block_potrf<T, N><<<B, 128>>>(dS, B); CK(cudaDeviceSynchronize());
@@ -398,6 +409,9 @@ static void run_for_N(Handles H, const char* dt, bool do_thru, bool do_lat) {
             {"posv",  "vendor",   restoreSb, [&]{ xpotrf_batched(H.cs, N, dSp, dinfo, B);
                                                   xpotrs_batched(H.cs, N, dSp, dbp, dinfo + B, B); }, true},
         };
+        if (sizeof(T) == 4)
+            rows.push_back({"gemm", "vendor_tf32", nop,
+                            [&]{ xgemm_sb(H.cb_tf32, N, (T)1, dA, MM, dB, MM, (T)0, dC, MM, B); }, true});
         for (auto& r : rows) {
             double ns = time_thru_ns_per_prob(B, r.restore, r.work);
             printf("RESULT section=thru op=%s dtype=%s N=%u B=%d impl=%s ns=%.2f\n",
@@ -444,6 +458,10 @@ static void run_for_N(Handles H, const char* dt, bool do_thru, bool do_lat) {
             {"posv",  "vendor",[&](int r){ xpotrf(H.cs, N, dS + (size_t)r*MM, dwork, lwork, dinfo);
                                            xpotrs(H.cs, N, dS + (size_t)r*MM, db + (size_t)r*N, dinfo); }},
         };
+        if (sizeof(T) == 4)
+            lats.push_back({"gemm", "vendor_tf32",
+                            [&](int r){ xgemm(H.cb_tf32, N, (T)1, dA + (size_t)r*MM,
+                                              dB + (size_t)r*MM, (T)0, dC + (size_t)r*MM); }});
         for (auto& L : lats) {
             // pristine pool per op — the previous op's potrf/posv mutated dS/db
             CK(cudaMemcpy(dS, dS0, MM*(size_t)R*sizeof(T), cudaMemcpyDeviceToDevice));
@@ -487,10 +505,13 @@ int main(int argc, char** argv) {
 
     Handles H;
     CB(cublasCreate(&H.cb));
+    CB(cublasCreate(&H.cb_tf32));
+    CB(cublasSetMathMode(H.cb_tf32, CUBLAS_TF32_TENSOR_OP_MATH));
     CS(cusolverDnCreate(&H.cs));
     if (dt == "f32" || dt == "both") run_dtype<float >(H, "f32", do_thru, do_lat);
     if (dt == "f64" || dt == "both") run_dtype<double>(H, "f64", do_thru, do_lat);
     CB(cublasDestroy(H.cb));
+    CB(cublasDestroy(H.cb_tf32));
     CS(cusolverDnDestroy(H.cs));
     printf("# done\n");
     return 0;

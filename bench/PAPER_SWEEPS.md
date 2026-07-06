@@ -7,7 +7,7 @@ plan: `docs/open-tasks/paper_glass_smallblock_2026-07-06.md`). These are
 
 | Leg | Harness | Paper figure | What it measures |
 |-----|---------|--------------|------------------|
-| hostblas | `bench_paper_hostblas.cu` | F2 (throughput vs batch), F4 (batch=1 latency) | glass block/warp vs cuBLAS `gemmStridedBatched` / cuSOLVER `potrfBatched(+potrsBatched)`, ops {gemm, potrf, posv(nrhs=1)}, N {4…64} × B {1…8192} × {f32,f64} |
+| hostblas | `bench_paper_hostblas.cu` | F2 (throughput vs batch), F4 (batch=1 latency) | glass block/warp vs cuBLAS `gemmStridedBatched` / cuSOLVER `potrfBatched(+potrsBatched)`, ops {gemm, potrf, posv(nrhs=1)}, N {4…64} × B {1…8192} × {f32,f64}; plus a `vendor_tf32` gemm-f32 contender (handle with `CUBLAS_TF32_TENSOR_OP_MATH` — tensor cores ALLOWED at relaxed numerics) whose report-only CHECK line records the measured TF32 rounding cost |
 | fusion | `bench_paper_fusion.cu` | F3 (fusion speedup vs batch) | fused `glass::riccati_gain` kernel (intermediates in smem) vs the same math as 7 host-batched cuBLAS/cuSOLVER calls, (NX,NU) {(12,4),(14,7),(36,12),(48,16)} × B {1…4096} |
 
 The nvidia-interface (cuBLASDx/cuSOLVERDx) curves for F1 come from the
@@ -53,6 +53,15 @@ lines.
 
 ## Results
 
-(none yet — timing deferred to a dedicated quiet window; smoke-validated
-2026-07-06 on a SHARED-load RTX 5090 / sm_120: correctness guards green
-f32+f64, all smoke timing numbers discarded)
+Timing: none yet — deferred to a dedicated quiet window; smoke-validated
+2026-07-06 on a SHARED-load RTX 5090 / sm_120 (correctness guards green
+f32+f64, all smoke timing numbers discarded).
+
+**Numerics finding (valid despite shared load — maxerr is deterministic):**
+the `vendor_tf32` CHECK column doubles as a tensor-core ENGAGEMENT detector.
+On CUDA 13.2 / sm_120, with TF32 allowed, cuBLAS still runs FP32-FFMA kernels
+for N ≤ 16 (maxerr ~1e-7, bit-matching the plain vendor row) and engages TF32
+only from N = 24 up, where maxerr jumps ~1000× to ~2e-4 (unit-scale data).
+Caveat: the error probe runs at B=4; heuristics could differ at other batch
+sizes — the timed sweep detects that case as a vendor_tf32-vs-vendor speed
+divergence at fixed N.
