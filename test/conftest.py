@@ -149,6 +149,10 @@ def _hash_sources(cu_path: pathlib.Path) -> str:
     h = hashlib.sha256()
     for p in [cu_path, CUDA_DIR / "helpers.cuh",
               GLASS_DIR / "glass.cuh", GLASS_DIR / "glass-cgrps.cuh",
+              # shared cross-file headers every base header sees (include-order
+              # roots) — edits here must bust EVERY cached binary
+              GLASS_DIR / "src" / "base" / "barrier.cuh",
+              GLASS_DIR / "src" / "base" / "flags.cuh",
               GLASS_DIR / "src" / "L3" / "box_qp.cuh",
               GLASS_DIR / "src" / "base" / "L1" / "dot_strided_coalesced.cuh",
               # base headers carrying the warp:: variants — listed explicitly so
