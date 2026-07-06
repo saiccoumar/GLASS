@@ -59,7 +59,18 @@ def gpu_busy():
 def build(leg, arch):
     src, libs = LEGS[leg]
     BUILD_DIR.mkdir(exist_ok=True)
-    out = BUILD_DIR / src.replace(".cu", "")
+    out = BUILD_DIR / f"{src.replace('.cu', '')}_{arch}"
+    # skip if fresh: binary newer than the harness source AND every library
+    # header (precompile via --build-only, then the quiet run starts instantly).
+    # arch is baked into the name so a build dir synced from another GPU
+    # (5090 -> Jetson) can never be mistaken for fresh.
+    if out.exists():
+        deps = [BENCH_DIR / src] + \
+               list((BENCH_DIR.parent / "src").rglob("*.cuh")) + \
+               list(BENCH_DIR.parent.glob("glass*.cuh"))
+        if out.stat().st_mtime > max(d.stat().st_mtime for d in deps):
+            print(f"[build] {leg}: up to date, skipping")
+            return out
     cmd = ["nvcc", "-std=c++17", f"-arch={arch}", "-O3", "--expt-relaxed-constexpr",
            "-I..", "-I../src", src, "-o", str(out)] + libs
     print(f"[build] {' '.join(cmd)}")
