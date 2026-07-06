@@ -11,6 +11,14 @@ shared/global memory. Three primary interfaces — **Block** (`glass::`), **Warp
 under [GRiD](https://github.com/A2R-Lab/GRiD), MPCGPU, GATO, HJCD-IK, and other
 A2R Lab GPU solvers.
 
+**Pushing to main: any commit that touches `src/`, the `glass*.cuh` roots, or
+`test/` MUST end with a fresh signed receipt** — run `./test/run_gpu_proof.sh`
+(full GPU suite, ~40 min) and include the regenerated `test/gpu-proof.json` in
+the push, or the `verify-gpu-proof` gate goes red (the receipt fingerprints the
+source tree, so an un-attested source change can't verify). If you add or edit
+a shared header, also register it in `test/conftest.py`'s hash list or cached
+test binaries won't rebuild.
+
 **Before changing any primitive, read `docs/agent_debugging_guide.md`** — it is
 the runbook for the recurring single-block CUDA bug classes (missing
 `__syncthreads()`, thread-count non-invariance, `beta=0` reads C, layout flags).
