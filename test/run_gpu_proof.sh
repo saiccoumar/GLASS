@@ -8,14 +8,14 @@
 # committer's github.com/<user>.keys on every push. Commit the receipt together
 # with (or right after) the change it attests.
 #
-# Requires: the pytest-gpu-proof submodule (git submodule update --init),
-# an SSH signing key (uses git config user.signingKey or ~/.ssh/id_*),
-# and a GPU. Usage:  ./test/run_gpu_proof.sh [extra pytest args]
+# Requires: an SSH signing key (uses git config user.signingKey or ~/.ssh/id_*)
+# and a GPU. pytest-gpu-proof comes from PyPI, pinned in test/requirements.txt.
+# Usage:  ./test/run_gpu_proof.sh [extra pytest args]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PY=.venv/bin/python
-$PY -m pip install -q -e test/pytest-gpu-proof
+$PY -m pip install -q -r test/requirements.txt
 
 # No --gpu-proof-fail-on-skip: GLASS has 10 permanent, documented skips
 # (8x test_l3 "cg kernel covers the default-flag path only", 2x test_getrf

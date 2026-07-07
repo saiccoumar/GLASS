@@ -21,7 +21,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true
           fetch-depth: 0   # ancestor-commit check needs history
 
       - name: Check for a receipt
@@ -35,9 +34,9 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install pytest-gpu-proof (submodule)
+      - name: Install pytest-gpu-proof (PyPI, pinned in test/requirements.txt)
         if: steps.receipt.outputs.present == 'true'
-        run: pip install ./test/pytest-gpu-proof
+        run: pip install "$(grep -o '^pytest-gpu-proof==[0-9.]*' test/requirements.txt)"
 
       - name: Verify receipt
         if: steps.receipt.outputs.present == 'true'

@@ -14,11 +14,6 @@ import tempfile
 
 import pytest
 
-# The pytest-gpu-proof submodule ships its own test tree (plugin dev tests with
-# a pytester conftest); it is not part of GLASS's suite and its conftest would
-# shadow this one. Excluded at collection so plain `pytest test/` just works.
-collect_ignore = ["pytest-gpu-proof"]
-
 # ─── paths ────────────────────────────────────────────────────────────────────
 
 TEST_DIR  = pathlib.Path(__file__).parent
@@ -464,7 +459,7 @@ def run_op(binary: pathlib.Path, op: str, version: str, args: list, inputs: list
             os.unlink(f)
 
 
-# ─── gpu-proof integration (test/pytest-gpu-proof submodule) ───────────────────
+# ─── gpu-proof integration (pytest-gpu-proof, pinned in test/requirements.txt) ──
 # test/run_gpu_proof.sh runs this suite with --gpu-proof-enable to emit a signed
 # receipt (test/gpu-proof.json) that the CPU-only verify-gpu-proof CI checks.
 # The plugin only records tests carrying the gpu_proof marker, so mark every
