@@ -9,6 +9,9 @@
  * (`potrf.cuh`) and `trsv` (`trsv.cuh`). Both callees end with a trailing
  * `__syncthreads()`, so the factor and the two solves compose with NO inter-call
  * barrier. Pure-SIMT companion to `glass::nvidia::posv`. Column-major throughout.
+ *
+ * NOTE: `glass::warp::posv` is NOT in this file — it lives in `trsm.cuh`,
+ * after the `warp::potrf`/`warp::trsm` definitions it composes.
  */
 
 /**
