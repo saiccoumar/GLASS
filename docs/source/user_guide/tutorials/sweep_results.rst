@@ -75,5 +75,69 @@ kernels win sooner).
 .. literalinclude:: /_static/sweep_winners.txt
    :language: text
 
+vs. host-batched cuBLAS/cuSOLVER (and TF32)
+-------------------------------------------
+
+The ladder above compares *device-side* backends. A separate question is how
+one-block-per-problem GLASS compares to the standard host-side recipe — a
+single ``cublas<t>gemmStridedBatched`` / ``cusolverDn<t>potrfBatched``
+(+ ``potrsBatched``) call over the whole batch.
+``bench/bench_paper_hostblas.cu`` measures exactly that: gemm / potrf / posv,
+``N`` = 4–64, batch ``B`` = 1–8192, both precisions (raw capture committed as
+``bench/paper_hostblas_20260708_0054.txt``; RTX 5090 / sm_120, quiet GPU).
+
+.. image:: /_static/hostblas_speedup.png
+   :alt: host-batched vendor time divided by best GLASS time, vs batch size
+   :width: 100%
+
+Above 1.0 = GLASS faster (fp32 shown; GLASS = best of block/warp). At robot
+sizes, host batching never catches up: gemm at ``N`` ≤ 24 and the full
+factor-and-solve (posv) through ``N`` = 64 are GLASS wins at **every** batch
+size, reaching 2.9–6.3× at saturation. The vendor's best regime is mid-batch
+(``B`` ≈ 64–1024), where it briefly leads standalone potrf at mid sizes; only
+gemm at ``N`` ≥ 32 is an outright vendor win at scale — the same mid-band the
+ladder already routes to ``glass::nvidia::``.
+
+Permitting TF32 tensor cores (dashed) does not change the story: cuBLAS
+*declines to engage them* below ``N`` = 24 (results bit-identical to FP32),
+and where they do engage the speed is a wash against FP32 cuBLAS while max
+error jumps three orders of magnitude (~1e-7 → ~2e-4) — unusable for the
+Cholesky-chain ops, which have no TF32 cuSOLVER path at all.
+
+Fusion: ``riccati_gain`` vs. a 7-call vendor chain
+--------------------------------------------------
+
+``glass::riccati_gain`` computes the LQR feedback gain
+``K = (R + BᵀPB)⁻¹(BᵀPA)`` in one kernel with all intermediates in shared
+memory; the host-batched equivalent is seven vendor calls (four gemms, a
+batched Cholesky, two triangular solves) with intermediates in global memory.
+``bench/bench_paper_fusion.cu`` compares them (capture
+``bench/paper_fusion_20260708_0055.txt``):
+
+.. image:: /_static/fusion_speedup.png
+   :alt: fused riccati_gain vs 7-call host-batched vendor chain
+   :width: 75%
+   :align: center
+
+Fusion wins at every batch size at quadrotor/manipulator scale — 2.5–2.8× at
+``(nx,nu)`` = (12,4) and 1.6–1.9× at (14,7) in fp32, more in fp64 — but the
+chain wins at (36,12) fp32 and (48,16), where the staged operands outgrow what
+one block overlaps profitably. Fusion is a measured choice, not a default:
+GLASS composes both forms from the same primitives.
+
+Single-call latency
+-------------------
+
+For a batch of **one** (a high-rate MPC tick), wall-clock per-call latency is
+what matters. The non-batched vendor calls pin an essentially flat API floor —
+~7–10 µs (``cublasSgemm``), ~15.5 µs (potrf), ~23–30 µs (posv) — while a GLASS
+call starts at 5.2 µs and grows with compute, so GLASS wins single-call
+latency through ``N`` = 32 (gemm), 12 (potrf), and 24 (posv); at ``N`` = 8 the
+full factor-and-solve is 2.4× faster (9.6 vs 23.5 µs). And inside your own
+kernel, composed GLASS calls never pay the API floor again.
+
+Both harnesses live in ``bench/`` and rerun via
+``python3 bench/paper_sweeps.py`` (see ``bench/PAPER_SWEEPS.md``).
+
 See :doc:`../concepts/tuning` for how to emit a per-host override table from a
 sweep, and :doc:`../../api_reference/defaults` for the picker API.

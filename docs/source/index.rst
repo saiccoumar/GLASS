@@ -136,10 +136,18 @@ regime:
    :alt: GLASS measured backend ladder, float64, RTX 5090 / sm_120
    :width: 100%
 
+GLASS also beats the standard *host-batched* recipe at robot sizes: against
+``cublasGemmStridedBatched`` / ``cusolverDnPotrfBatched``, gemm at ``N`` ≤ 24
+and the factor-and-solve chain through ``N`` = 64 win at **every** batch size
+tested (up to 6.3× at saturation) — including with TF32 tensor cores permitted,
+which cuBLAS declines to engage below ``N`` = 24 anyway.
+
 See :doc:`user_guide/tutorials/sweep_results` for the same ladder across the
 ``NPROB=64`` / ``1024`` / ``8192`` batch regimes (the winner shifts with batch
-size) and the per-``(op, N)`` winner table, and :doc:`user_guide/concepts/tuning`
-to regenerate it for your own GPU with ``bench/tune.py``.
+size), the host-batched cuBLAS/cuSOLVER and TF32 comparison, the fused
+``riccati_gain`` case study, and the per-``(op, N)`` winner table; see
+:doc:`user_guide/concepts/tuning` to regenerate everything for your own GPU
+with ``bench/tune.py``.
 
 .. toctree::
    :hidden:
