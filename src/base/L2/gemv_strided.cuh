@@ -37,7 +37,7 @@ __device__ void gemv_strided(T alpha, const T* A, const T* x, T beta, T* y)
         T res = static_cast<T>(0);
         for (uint32_t col = 0; col < N; col++)
             res += A[row + col * ROW_STRIDE] * x[col];
-        y[row] = alpha * res + beta * y[row];
+        y[row] = beta_blend(alpha * res, beta, y[row]);
     }
 }
 

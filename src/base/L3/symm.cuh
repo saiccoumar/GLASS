@@ -52,7 +52,7 @@ __device__ void symm_impl(Bar bar, SizeT n, SizeU m, T alpha,
             const T a = in_tri ? A[i + k*n] : A[k + i*n];
             res += a * B[k + j*n];
         }
-        if constexpr (HAS_BETA) C[el] = alpha*res + beta*C[el];
+        if constexpr (HAS_BETA) C[el] = beta_blend(alpha*res, beta, C[el]);
         else                    C[el] = alpha*res;
     }
     if constexpr (TRAILING_SYNC) bar.sync();
@@ -76,7 +76,7 @@ __device__ void symm_impl(Bar bar, SizeT n, SizeU m, T alpha,
  * @param alpha  Scalar multiplier on the product.
  * @param A      Symmetric matrix, `FILL` triangle stored (column-major; read-only).
  * @param B      Input matrix (n x m, column-major).
- * @param beta   Scalar multiplier on the existing C (C is read; caller must initialize it).
+ * @param beta   Scalar multiplier on the existing C (read only when `beta != 0`).
  * @param C      In/out result matrix (n x m, column-major); must not alias A/B.
  */
 template <typename T, FillMode FILL = FillMode::Lower, bool TRAILING_SYNC = true>
@@ -127,7 +127,7 @@ __device__ void symm(uint32_t n, uint32_t m, T alpha,
  * @param alpha  Scalar multiplier on the product.
  * @param A      Symmetric matrix, `FILL` triangle stored (read-only).
  * @param B      Input matrix (N x M, column-major).
- * @param beta   Scalar multiplier on the existing C (C is read; caller must initialize it).
+ * @param beta   Scalar multiplier on the existing C (read only when `beta != 0`).
  * @param C      In/out result matrix (N x M, column-major); must not alias A/B.
  */
 template <typename T, uint32_t N, uint32_t M,

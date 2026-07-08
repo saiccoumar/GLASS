@@ -130,7 +130,7 @@ __device__ void gemv_segmented(
         if (ATOMIC_Y) {
             atomicAdd(&y[y_base + out], alpha * res);
         } else {
-            T val = alpha * res + beta * y[y_base + out];
+            T val = beta_blend(alpha * res, beta, y[y_base + out]);
             if (FUSE_SCALED_ADD)
                 val += S[static_cast<uint32_t>(seg_s_off[seg]) + out] * scalar[seg];
             y[y_base + out] = val;

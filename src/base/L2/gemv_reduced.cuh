@@ -33,7 +33,7 @@ namespace detail {
                     p[vlane] = acc;
                 }
                 const T res = reduced_tree32<T>(p);
-                y[o] = HAS_BETA ? (alpha*res + beta*y[o]) : (alpha*res);
+                y[o] = HAS_BETA ? beta_blend(alpha*res, beta, y[o]) : (alpha*res);
             }
             return;
         }
@@ -45,7 +45,7 @@ namespace detail {
                 for (uint32_t c = lane; c < CDIM; c += 32u)
                     partial += (TRANSPOSE ? A[c + o*M] : A[o + c*M]) * x[c];
                 const T res = warp::reduce<T>(partial);
-                if (lane == 0) y[o] = HAS_BETA ? (alpha*res + beta*y[o]) : (alpha*res);
+                if (lane == 0) y[o] = HAS_BETA ? beta_blend(alpha*res, beta, y[o]) : (alpha*res);
             }
         }
     }
@@ -66,7 +66,7 @@ namespace detail {
  * @param alpha  Scalar on the product.
  * @param A      Input matrix (M x N, column-major).
  * @param x      Input vector (length N if !TRANSPOSE else M).
- * @param beta   Scalar on the existing y (read; caller must initialize it).
+ * @param beta   Scalar on the existing y (read only when `beta != 0`).
  * @param y      In/out result (length M if !TRANSPOSE else N).
  */
 template <typename T, uint32_t M, uint32_t N, bool TRANSPOSE = false, bool TRAILING_SYNC = true>

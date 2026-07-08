@@ -80,7 +80,7 @@ __device__ void gemm_reduced_impl_ct(uint32_t rank, uint32_t size,
             }
             T res = reduced_tree32<T>(p);
             const uint32_t cidx = ROW_MAJOR_C ? (m*N + n) : (m + n*M);
-            C[cidx] = HAS_BETA ? (alpha*res + beta*C[cidx]) : (alpha*res);
+            C[cidx] = HAS_BETA ? beta_blend(alpha*res, beta, C[cidx]) : (alpha*res);
         }
         return;
     }
@@ -102,7 +102,7 @@ __device__ void gemm_reduced_impl_ct(uint32_t rank, uint32_t size,
             T res = warp::reduce<T>(partial);   // full mask: warp is full
             if (lane == 0) {
                 const uint32_t cidx = ROW_MAJOR_C ? (m*N + n) : (m + n*M);
-                C[cidx] = HAS_BETA ? (alpha*res + beta*C[cidx]) : (alpha*res);
+                C[cidx] = HAS_BETA ? beta_blend(alpha*res, beta, C[cidx]) : (alpha*res);
             }
         }
     }
@@ -130,7 +130,7 @@ __device__ void gemm_reduced_impl_ct(uint32_t rank, uint32_t size,
  * @tparam TRAILING_SYNC  Emit a trailing `__syncthreads()` (default true) so callers can read C safely.
  * @param alpha  Scalar multiplier on the product.
  * @param A,B    Input matrices.
- * @param beta   Scalar multiplier on the existing C (C is read; caller must initialize it).
+ * @param beta   Scalar multiplier on the existing C (read only when `beta != 0`).
  * @param C      In/out result matrix.
  */
 template <typename T, uint32_t M, uint32_t N, uint32_t K,
@@ -189,7 +189,7 @@ namespace warp {
      * @tparam TRAILING_SYNC  Emit a trailing `__syncwarp()` (default true) so lanes can read C safely.
      * @param alpha  Scalar multiplier on the product.
      * @param A,B    Input matrices.
-     * @param beta   Scalar multiplier on the existing C (C is read; caller must initialize it).
+     * @param beta   Scalar multiplier on the existing C (read only when `beta != 0`).
      * @param C      In/out result matrix.
      */
     template <typename T, uint32_t M, uint32_t N, uint32_t K,

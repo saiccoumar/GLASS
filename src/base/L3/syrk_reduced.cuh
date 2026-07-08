@@ -44,10 +44,10 @@ namespace detail {
                 }
                 const T res = reduced_tree32<T>(p);
                 const uint32_t idx = i + j*OUT;
-                C[idx] = HAS_BETA ? (alpha*res + beta*C[idx]) : (alpha*res);
+                C[idx] = HAS_BETA ? beta_blend(alpha*res, beta, C[idx]) : (alpha*res);
                 if (i != j) {
                     const uint32_t m = j + i*OUT;
-                    C[m] = HAS_BETA ? (alpha*res + beta*C[m]) : (alpha*res);
+                    C[m] = HAS_BETA ? beta_blend(alpha*res, beta, C[m]) : (alpha*res);
                 }
             }
             return;
@@ -67,10 +67,10 @@ namespace detail {
                 const T res = warp::reduce<T>(partial);
                 if (lane == 0) {
                     const uint32_t idx = i + j*OUT;
-                    C[idx] = HAS_BETA ? (alpha*res + beta*C[idx]) : (alpha*res);
+                    C[idx] = HAS_BETA ? beta_blend(alpha*res, beta, C[idx]) : (alpha*res);
                     if (i != j) {
                         const uint32_t m = j + i*OUT;
-                        C[m] = HAS_BETA ? (alpha*res + beta*C[m]) : (alpha*res);
+                        C[m] = HAS_BETA ? beta_blend(alpha*res, beta, C[m]) : (alpha*res);
                     }
                 }
             }
@@ -92,7 +92,7 @@ namespace detail {
  * @tparam TRAILING_SYNC  Emit a trailing `__syncthreads()` (default true).
  * @param alpha  Scalar on the product.
  * @param A      Input matrix (ROWS x COLS, column-major).
- * @param beta   Scalar on the existing C (read; caller must initialize it).
+ * @param beta   Scalar on the existing C (read only when `beta != 0`).
  * @param C      In/out symmetric result (full storage; OUT x OUT, OUT = TRANSPOSE?COLS:ROWS).
  */
 template <typename T, uint32_t ROWS, uint32_t COLS, bool TRANSPOSE = false, bool TRAILING_SYNC = true>

@@ -48,10 +48,10 @@ namespace detail {
                 }
                 const T res = reduced_tree32<T>(p);
                 const uint32_t idx = i + j*ROWS;
-                R[idx] = HAS_BETA ? (alpha*res + beta*R[idx]) : (alpha*res);
+                R[idx] = HAS_BETA ? beta_blend(alpha*res, beta, R[idx]) : (alpha*res);
                 if (SYMM && i != j) {
                     const uint32_t m = j + i*ROWS;
-                    R[m] = HAS_BETA ? (alpha*res + beta*R[m]) : (alpha*res);
+                    R[m] = HAS_BETA ? beta_blend(alpha*res, beta, R[m]) : (alpha*res);
                 }
             }
             return;
@@ -69,10 +69,10 @@ namespace detail {
                 const T res = warp::reduce<T>(partial);
                 if (lane == 0) {
                     const uint32_t idx = i + j*ROWS;
-                    R[idx] = HAS_BETA ? (alpha*res + beta*R[idx]) : (alpha*res);
+                    R[idx] = HAS_BETA ? beta_blend(alpha*res, beta, R[idx]) : (alpha*res);
                     if (SYMM && i != j) {
                         const uint32_t m = j + i*ROWS;
-                        R[m] = HAS_BETA ? (alpha*res + beta*R[m]) : (alpha*res);
+                        R[m] = HAS_BETA ? beta_blend(alpha*res, beta, R[m]) : (alpha*res);
                     }
                 }
             }

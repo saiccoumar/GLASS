@@ -154,6 +154,24 @@ def test_gemm_rt_beta0_no_read(bins, m, n, k, ta, tb):
     assert np.allclose(result.reshape(m, n, order='F'), expected, rtol=RTOL, atol=ATOL)
 
 
+@pytest.mark.parametrize("m,n,k", [(5, 7, 3), (8, 1, 5), (6, 6, 6), (16, 4, 8)])
+@pytest.mark.parametrize("ta,tb", TRANSPOSE_COMBOS)
+def test_gemm_rt_betaform_beta0_no_read(bins, m, n, k, ta, tb):
+    """BLAS beta==0 semantics: the BETA overload (nb=0) called with beta=0 must
+    also treat C as write-only — 0*NaN must not poison the result. Regression
+    for the GRiD s_vaf uninit-smem NaN (2026-07-08); the (16,4,8) shape takes
+    the tile4 fast path."""
+    alpha = 1.5
+    opA, opB, A_flat, B_flat = _gemm_storage(m, n, k, ta, tb, seed=304)
+    C_poison = np.full((m, n), np.nan, dtype=np.float32)
+    expected = (alpha * (opA @ opB)).astype(np.float32)
+    result = run_op(bins["l3"], "gemm_rt", "simple",
+                    args=[64, m, n, k, ta, tb, 0, 0, alpha, 0.0],
+                    inputs=[A_flat, B_flat, _c_flat(C_poison, 0)])
+    assert not np.any(np.isnan(result)), "beta form at beta=0 read the NaN-poisoned C"
+    assert np.allclose(result.reshape(m, n, order='F'), expected, rtol=RTOL, atol=ATOL)
+
+
 @pytest.mark.parametrize("m,n,k", [(5, 7, 3), (8, 1, 5), (9, 4, 7)])
 def test_gemm_rowmajor_is_transpose(bins, m, n, k):
     """Row-major == transpose, bit-for-bit: feeding op(A) as a row-major M×K buffer
