@@ -148,6 +148,12 @@ This is exactly how GRiD's generated RNEA NaN'd (2026-07-08): the v/a forward-pa
   `test_l3.py::test_gemm_rt_betaform_beta0_no_read` call the BETA overloads with `beta = 0` into a
   NaN-poisoned destination and require a clean result; `test_gemm_rt_beta0_no_read` covers the
   no-beta overloads. Keep poisoned-destination beta=0 cases in any new beta-form test.
+- **The `nvidia::` surface honors the same guarantee** — audited 2026-07-08: `l3_simt.cuh`
+  forwards to the fixed base cores, and the cuBLASDx route was probed empirically (poison ∈
+  {0, 1e30, NaN} → bit-identical output, f32+f64): `cublasdx::execute` does not blend a
+  `beta == 0` destination on MathDx 26.03. That vendor behavior is PINNED by
+  `test_nvidia_dispatch.py::test_dispatch_op[beta0_poison]` — if a future MathDx bump breaks it,
+  that test fails and the fix is to zero-fill `c_smem` instead of staging `C` when `beta == 0`.
 - **The historical tell (if you ever see it again):** a discrepancy that is thread-count-dependent,
   nondeterministic across launches, and vanishes at 1 thread is the signature of reading cold
   scratch. Sanitizers do NOT catch read-of-uninitialized **shared** memory — qNaN-poison the
