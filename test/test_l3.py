@@ -475,8 +475,6 @@ def test_chol(bins, n, version):
 @pytest.mark.parametrize("transpose", [False, True])
 @pytest.mark.parametrize("version", CG_SIMPLE)
 def test_trsm(bins, n, nrhs, transpose, version):
-    if version == "cg" and transpose:
-        pytest.skip("cg kernel covers the default-flag path only")
     L = make_lower_triangular(n, rng=RNG)
     B = RNG.random((n, nrhs)).astype(np.float32)
     L_col = np.asfortranarray(L).ravel(order='F')
