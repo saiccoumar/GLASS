@@ -62,7 +62,7 @@ template <typename Bar, typename T, bool TRAILING_SYNC = true>
 __device__ void axpby_impl(Bar bar, uint32_t n, T alpha, T *x, T beta, T *y, T *z)
 {
     uint32_t rank = bar.rank(), size = bar.size();
-    for (uint32_t i = rank; i < n; i += size) z[i] = alpha*x[i] + beta*y[i];
+    for (uint32_t i = rank; i < n; i += size) z[i] = beta_blend(alpha*x[i], beta, y[i]);
     if constexpr (TRAILING_SYNC) bar.sync();
 }
 

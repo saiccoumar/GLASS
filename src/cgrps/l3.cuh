@@ -21,7 +21,7 @@ namespace cgrps = cooperative_groups;
  * @param m,n,k  Dimensions: `C` is `m×n`, contraction `k`.
  * @param alpha  Scalar multiplier on the product.
  * @param A,B    Input matrices.
- * @param beta   Scalar multiplier on the existing C (C is read; caller must initialize it).
+ * @param beta   Scalar multiplier on the existing C (read only when `beta != 0`).
  * @param C      In/out result matrix.
  * @param g      Cooperative thread group (defaults to the whole block).
  */
@@ -74,7 +74,7 @@ __device__ void gemm(uint32_t m, uint32_t n, uint32_t k,
  * @tparam ROW_MAJOR_C  Output storage order (false = column-major).
  * @param alpha  Scalar multiplier on the product.
  * @param A,B    Input matrices.
- * @param beta   Scalar multiplier on the existing C (C is read; caller must initialize it).
+ * @param beta   Scalar multiplier on the existing C (read only when `beta != 0`).
  * @param C      In/out result matrix.
  * @param g      Cooperative thread group (defaults to the whole block).
  */
@@ -218,7 +218,7 @@ __device__ void trsm(uint32_t n, uint32_t nrhs, const T *A, T *B,
  * @tparam TRAILING_SYNC  Emit a trailing `g.sync()` (default true).
  * @param alpha  Scalar multiplier on the product.
  * @param A,B    Input matrices.
- * @param beta   Scalar multiplier on the existing C (read; caller must initialize it).
+ * @param beta   Scalar multiplier on the existing C (read only when `beta != 0`).
  * @param C      In/out result matrix.
  * @param g      Cooperative thread group (defaults to the whole block).
  */

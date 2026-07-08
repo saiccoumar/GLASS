@@ -30,16 +30,14 @@ top of the shuffle cost.
 
 ## Win-condition (what the picker encodes)
 
-Reduced is competitive only when **both** hold:
-
-1. `n_out ≤ blockDim / 32` — every output gets its own warp, so there is no
-   serial output loop layered on top of the shuffle; and
-2. `K_contract ≥ 32` — the contraction is long enough to (a) use a full warp's
-   lanes and (b) amortize the shuffle tail.
-
-`glass::suggested_use_reduced<n_out, K_contract, blockDim>()` returns `true` only
-in that corner and `false` otherwise — i.e. it recommends **serial almost
-always**. Treat the `*_reduced` family as a niche tool, not a default.
+**Retired to constant `false` (2026-07-08).** The quiet-GPU resweep measured
+**0 of 48** configurations where reduced clears the ±5% tie margin — even the
+former long-contraction corner (`n_out ≤ blockDim/32 && K_contract ≥ 32`, the
+2×64×2 cells that measured 1.11–1.12× on the earlier shared-GPU sweep)
+collapsed into the noise band. `glass::suggested_use_reduced<>()` therefore
+returns `false` unconditionally on sm_120; its signature is kept as the seam
+for a future data-derived corner on different hardware (e.g. Jetson Orin).
+Treat the `*_reduced` family as an expressiveness tool, never a speed default.
 
 ## Caveat for the tensor / congruence families
 

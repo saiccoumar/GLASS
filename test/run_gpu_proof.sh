@@ -17,9 +17,10 @@ cd "$(dirname "$0")/.."
 PY=.venv/bin/python
 $PY -m pip install -q -r test/requirements.txt
 
-# No --gpu-proof-fail-on-skip: GLASS has 10 permanent, documented skips
-# (8x test_l3 "cg kernel covers the default-flag path only", 2x test_getrf
-# "zero leading pivot is singular at n=1"). They are recorded in the receipt;
+# No --gpu-proof-fail-on-skip: GLASS has 2 permanent, documented skips
+# (test_getrf "zero leading pivot is singular at n=1" — vacuous; the former
+# 8 cg-trsm skips were DE-GATED 2026-07-08 by instantiating the transpose-flag
+# cgrps kernel). They are recorded in the receipt;
 # the CI verify step pins them as an EXACT set via test/expected_skips.txt
 # (--expected-skips) — a new skip, or a pinned one that starts running, fails.
 # --gpu-proof-github-user: the signer must be the human KEYHOLDER, not the

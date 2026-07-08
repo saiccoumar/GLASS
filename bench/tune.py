@@ -247,8 +247,13 @@ def build_reduced(sms):
 
 
 def predicate_use_reduced(n_out, K, blockDim):
-    """Mirror of glass::suggested_use_reduced<n_out,K_contract,blockDim>()."""
-    return (n_out <= blockDim // 32) and (K >= 32)
+    """Mirror of glass::suggested_use_reduced<n_out,K_contract,blockDim>().
+
+    Retired to constant False 2026-07-08: the quiet-GPU resweep measured 0/48
+    reduced wins under the ±5% margin, so the predicate's true-corner was
+    emptied. If a sweep on new hardware finds wins, derive a new corner from
+    that data and update BOTH this mirror and the .cuh predicate."""
+    return False
 
 
 def analyze_reduced(text, margin):

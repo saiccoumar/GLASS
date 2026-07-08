@@ -14,7 +14,7 @@ __device__ void gemv_impl(uint32_t rank, uint32_t size,
                 T a = ROW_MAJOR_A ? A[col*n + row] : A[col + row*m];
                 res += a * x[col];
             }
-            y[row] = alpha*res + beta*y[row];
+            y[row] = beta_blend(alpha*res, beta, y[row]);
         }
     } else {
         for (uint32_t row = rank; row < m; row += size) {
@@ -23,7 +23,7 @@ __device__ void gemv_impl(uint32_t rank, uint32_t size,
                 T a = ROW_MAJOR_A ? A[row*n + col] : A[row + col*m];
                 res += a * x[col];
             }
-            y[row] = alpha*res + beta*y[row];
+            y[row] = beta_blend(alpha*res, beta, y[row]);
         }
     }
 }
@@ -129,7 +129,7 @@ __device__ void gemv_impl_ct(uint32_t rank, uint32_t size,
                 T a = ROW_MAJOR_A ? A[col*N + row] : A[col + row*M];
                 res += a * x[col];
             }
-            y[row] = alpha*res + beta*y[row];
+            y[row] = beta_blend(alpha*res, beta, y[row]);
         }
     } else {
         for (uint32_t row = rank; row < M; row += size) {
@@ -138,7 +138,7 @@ __device__ void gemv_impl_ct(uint32_t rank, uint32_t size,
                 T a = ROW_MAJOR_A ? A[row*N + col] : A[row + col*M];
                 res += a * x[col];
             }
-            y[row] = alpha*res + beta*y[row];
+            y[row] = beta_blend(alpha*res, beta, y[row]);
         }
     }
 }
@@ -238,8 +238,8 @@ namespace warp {
      * of the `M×N` matrix `A` (each row an independent inner product). Set
      * `TRANSPOSE=true` for `Aᵀ * x` and `ROW_MAJOR=true` for row-major `A`. No shared
      * scratch, no `__syncthreads`; independent warps may run distinct problems
-     * concurrently. Full 32 lanes required. `C`/`y` is read (the `beta * y` term);
-     * use the no-beta overload to write into uninitialized destinations. NumPy
+     * concurrently. Full 32 lanes required. `y` is read only when `beta != 0`
+     * (BLAS semantics: `beta == 0` treats `y` as write-only). NumPy
      * equivalent: `y = alpha*A@x + beta*y` (or `alpha*A.T@x + beta*y` when transposed).
      *
      * @tparam T          Scalar type (e.g. `float`, `double`).

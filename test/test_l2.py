@@ -113,6 +113,25 @@ def test_gemv_full_sweep(bins, op, trans, kind):
     assert _rel_close(result, expected)
 
 
+# BLAS beta==0 semantics: the beta overload called with beta=0 must treat y as
+# WRITE-ONLY — a NaN-poisoned y must not contaminate the result (an unguarded
+# blend computes 0*NaN=NaN). Regression for the GRiD s_vaf uninit-smem NaN
+# (2026-07-08): generated RNEA issues beta=0 gemvs over cold shared memory.
+@pytest.mark.parametrize("version", CG_SIMPLE)
+def test_gemv_beta0_poisoned_y_no_read(bins, version):
+    m, n = 8, 6
+    alpha = 1.5
+    A = _make_mat(m, n, seed=77)
+    x = make_vec(n, seed=78)
+    y = np.full(m, np.nan, dtype=np.float32)
+    result = sweep_exact(bins["l2"], "gemv", version,
+                         [m, n, alpha, 0.0],
+                         [np.asfortranarray(A).ravel(order='F'), x, y])
+    assert not np.any(np.isnan(result)), "beta=0 gemv read the NaN-poisoned y"
+    expected = (alpha * A.astype(np.float64) @ x).astype(np.float32)
+    assert _rel_close(result, expected)
+
+
 # ─── gemv row-major ────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("m,n", [(8, 6), (12, 4), (16, 12)])
@@ -153,6 +172,21 @@ def test_gemv_strided(bins, op, m, n, rs, alpha, beta):
     assert np.allclose(result, expected, rtol=RTOL, atol=ATOL)
 
 
+# beta==0 write-only semantics for the strided beta form (see the gemv poison test).
+def test_gemv_strided_beta0_poisoned_y_no_read(bins):
+    m, n, rs = 6, 6, 8
+    A_storage = np.zeros((rs, n), dtype=np.float32)
+    A_storage[:m, :] = make_general(m, n, seed=79)
+    x = make_vec(n, seed=80)
+    y = np.full(m, np.nan, dtype=np.float32)
+    result = sweep_exact(bins["l2"], "gemv_strided_6x6_8", "simple",
+                         [m, n, 1.0, 0.0],
+                         [np.asfortranarray(A_storage).ravel(order='F'), x, y])
+    assert not np.any(np.isnan(result)), "beta=0 gemv_strided read the NaN-poisoned y"
+    expected = (A_storage[:m, :].astype(np.float64) @ x).astype(np.float32)
+    assert np.allclose(result, expected, rtol=RTOL, atol=ATOL)
+
+
 # ─── gemv_segmented ──────────────────────────────────────────────
 # `segments` independent 6x6 col-major (LDA=6) GEMVs computed concurrently.
 # Descriptor arrays give per-segment base element offsets into packed buffers.
@@ -190,6 +224,23 @@ def _build_segmented(segments, m, n, rs, rng, with_S=False):
         out["s_off"] = np.array(s_off, np.float32)
         out["S_blocks"] = S_blocks
     return out
+
+
+# beta==0 write-only semantics for the segmented beta form — THE GRiD RNEA shape
+# (v/a forward-pass gemvs write cold s_vaf slots with beta=0; see the gemv poison test).
+@pytest.mark.parametrize("segments", [1, 3])
+def test_gemv_segmented_beta0_poisoned_y_no_read(bins, segments):
+    m, n, rs = 6, 6, 6
+    d = _build_segmented(segments, m, n, rs, RNG)
+    y_poison = np.full_like(d["y"], np.nan)
+    result = sweep_exact(
+        bins["l2"], "seg_gemv_6x6_nofuse", "simple",
+        [m, n, segments, 1.0, 0.0, d["A"].size, d["x"].size, d["y"].size],
+        [d["a_off"], d["x_off"], d["y_off"], d["A"], d["x"], y_poison])
+    assert not np.any(np.isnan(result)), "beta=0 gemv_segmented read the NaN-poisoned y"
+    expected = np.concatenate(
+        [d["A_blocks"][s] @ d["x_blocks"][s] for s in range(segments)]).astype(np.float32)
+    assert np.allclose(result, expected, rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("segments", [1, 3, 5])

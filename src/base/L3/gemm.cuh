@@ -130,10 +130,10 @@ __device__ __forceinline__ void gemm_tile4_loop(uint32_t rank, uint32_t size,
             }
             T *__restrict__ c = C + (r + n*m_);
             if constexpr (HAS_BETA) {
-                c[0] = alpha*acc0 + beta*c[0];
-                c[1] = alpha*acc1 + beta*c[1];
-                c[2] = alpha*acc2 + beta*c[2];
-                c[3] = alpha*acc3 + beta*c[3];
+                c[0] = beta_blend(alpha*acc0, beta, c[0]);
+                c[1] = beta_blend(alpha*acc1, beta, c[1]);
+                c[2] = beta_blend(alpha*acc2, beta, c[2]);
+                c[3] = beta_blend(alpha*acc3, beta, c[3]);
             } else {
                 c[0] = alpha*acc0; c[1] = alpha*acc1;
                 c[2] = alpha*acc2; c[3] = alpha*acc3;
@@ -145,7 +145,7 @@ __device__ __forceinline__ void gemm_tile4_loop(uint32_t rank, uint32_t size,
                     const T b = TRANSPOSE_B ? B[n + k*n_] : B[k + n*k_];
                     res += A[m + k*m_] * b;
                 }
-                if constexpr (HAS_BETA) C[m + n*m_] = alpha*res + beta*C[m + n*m_];
+                if constexpr (HAS_BETA) C[m + n*m_] = beta_blend(alpha*res, beta, C[m + n*m_]);
                 else                    C[m + n*m_] = alpha*res;
             }
         }
@@ -196,10 +196,10 @@ __device__ __forceinline__ void gemm_tile4_loop_ct(uint32_t rank, uint32_t size,
             }
             T *__restrict__ c = C + (r + n*M);
             if constexpr (HAS_BETA) {
-                c[0] = alpha*acc0 + beta*c[0];
-                c[1] = alpha*acc1 + beta*c[1];
-                c[2] = alpha*acc2 + beta*c[2];
-                c[3] = alpha*acc3 + beta*c[3];
+                c[0] = beta_blend(alpha*acc0, beta, c[0]);
+                c[1] = beta_blend(alpha*acc1, beta, c[1]);
+                c[2] = beta_blend(alpha*acc2, beta, c[2]);
+                c[3] = beta_blend(alpha*acc3, beta, c[3]);
             } else {
                 c[0] = alpha*acc0; c[1] = alpha*acc1;
                 c[2] = alpha*acc2; c[3] = alpha*acc3;
@@ -211,7 +211,7 @@ __device__ __forceinline__ void gemm_tile4_loop_ct(uint32_t rank, uint32_t size,
                     const T b = TRANSPOSE_B ? B[n + k*N] : B[k + n*K];
                     res += A[m + k*M] * b;
                 }
-                if constexpr (HAS_BETA) C[m + n*M] = alpha*res + beta*C[m + n*M];
+                if constexpr (HAS_BETA) C[m + n*M] = beta_blend(alpha*res, beta, C[m + n*M]);
                 else                    C[m + n*M] = alpha*res;
             }
         }
@@ -262,7 +262,7 @@ __device__ void gemm_impl(uint32_t rank, uint32_t size,
             res += a * b;
         }
         uint32_t cidx = ROW_MAJOR_C ? (m*n_ + n) : (m + n*m_);
-        C[cidx] = alpha*res + beta*C[cidx];
+        C[cidx] = beta_blend(alpha*res, beta, C[cidx]);
     }
 }
 
@@ -314,7 +314,7 @@ __device__ void gemm_impl_ct(uint32_t rank, uint32_t size,
                 res += a * b;
             }
             uint32_t cidx = ROW_MAJOR_C ? (m*N + n) : (m + n*M);
-            C[cidx] = alpha*res + beta*C[cidx];
+            C[cidx] = beta_blend(alpha*res, beta, C[cidx]);
         }
     }
 }
@@ -360,7 +360,7 @@ __device__ void gemm_impl_ct(uint32_t rank, uint32_t size,
  * @param m,n,k  Dimensions: `C` is `m×n`, contraction `k`.
  * @param alpha  Scalar multiplier on the product.
  * @param A,B    Input matrices (column-major; shapes per the transpose flags).
- * @param beta   Scalar multiplier on the existing C (C is read; caller must initialize it).
+ * @param beta   Scalar multiplier on the existing C (read only when `beta != 0`).
  * @param C      In/out result matrix.
  */
 template <typename T, bool TRANSPOSE_A = false, bool TRANSPOSE_B = false, bool ROW_MAJOR_C = false, bool TRAILING_SYNC = true>
@@ -418,7 +418,7 @@ __device__ void gemm(uint32_t m, uint32_t n, uint32_t k,
  * @tparam ROW_MAJOR_C  Output storage order (false = column-major / Fortran, LDC=M).
  * @param alpha  Scalar multiplier on the product.
  * @param A,B    Input matrices.
- * @param beta   Scalar multiplier on the existing C (C is read; caller must initialize it).
+ * @param beta   Scalar multiplier on the existing C (read only when `beta != 0`).
  * @param C      In/out result matrix.
  */
 template <typename T, uint32_t M, uint32_t N, uint32_t K,
@@ -474,7 +474,7 @@ namespace warp {
      * @tparam ROW_MAJOR_C  Output storage order (false = column-major).
      * @param alpha  Scalar multiplier on the product.
      * @param A,B    Input matrices.
-     * @param beta   Scalar multiplier on the existing C (C is read; caller must initialize it).
+     * @param beta   Scalar multiplier on the existing C (read only when `beta != 0`).
      * @param C      In/out result matrix.
      */
     template <typename T, uint32_t M, uint32_t N, uint32_t K,
@@ -524,7 +524,7 @@ namespace warp {
  * @param m,n,k  Dimensions: A is m×k, B is k×n, C is m×n.
  * @param alpha  Scalar multiplier on the product.
  * @param A,B    Input matrices (column-major).
- * @param beta   Scalar multiplier on the existing C (C is read; caller must initialize it).
+ * @param beta   Scalar multiplier on the existing C (read only when `beta != 0`).
  * @param C      In/out result matrix.
  * @param s_A    Shared scratch of `m * TILE` elements for the A tile.
  * @param s_B    Shared scratch of `TILE * n` elements for the B tile.
@@ -563,7 +563,7 @@ __device__ void gemm_tiled(uint32_t m, uint32_t n, uint32_t k,
         }
         __syncthreads();
     }
-    if (valid) C[crow + ccol*m] = alpha*acc + beta*C[crow + ccol*m];
+    if (valid) C[crow + ccol*m] = beta_blend(alpha*acc, beta, C[crow + ccol*m]);
 }
 
 // ─── auto-dispatch: tiled when scratch provided and m*n <= blockDim ──────────
@@ -580,7 +580,7 @@ __device__ void gemm_tiled(uint32_t m, uint32_t n, uint32_t k,
  * @param m,n,k  Dimensions: A is m×k, B is k×n, C is m×n.
  * @param alpha  Scalar multiplier on the product.
  * @param A,B    Input matrices (column-major).
- * @param beta   Scalar multiplier on the existing C (C is read; caller must initialize it).
+ * @param beta   Scalar multiplier on the existing C (read only when `beta != 0`).
  * @param C      In/out result matrix.
  * @param s_A    Optional shared scratch for the A tile (nullptr selects the plain path).
  * @param s_B    Optional shared scratch for the B tile.

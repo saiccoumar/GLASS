@@ -10,7 +10,7 @@
 //
 // Usage:  ./test_nvidia_dispatch <op>
 //   ops:  gemm_simt, gemm_cublas, gemm_transb, gemv_simt, strided_gemv,
-//         strided_gemm, dispatch_q
+//         strided_gemm, beta0_poison, dispatch_q
 //
 // Returns 0 + "PASS" on stdout if the result matches the reference within
 // 1e-4 max abs error; returns 1 + "FAIL" otherwise.
@@ -221,6 +221,42 @@ static int op_strided_gemm() {
     return err > 1e-4f;
 }
 
+static int op_beta0_poison() {
+    // BLAS beta==0 write-only semantics through the nvidia:: surface: with C
+    // pre-poisoned to NaN, both the cuBLASDx route and the SIMT route must
+    // come back clean. The SIMT arm pins the base beta_blend epilogue; the
+    // cuBLASDx arm pins the VENDOR behavior (cublasdx::execute does not blend
+    // a beta==0 destination — verified empirically on MathDx 26.03; this test
+    // exists so a future MathDx bump that changes that fails loudly).
+    constexpr int M=16, N=16, K=16;
+    std::vector<float> A(M*K), B(K*N), Cref(M*N), Cdev(M*N),
+                       Cpoison(M*N, std::nanf(""));
+    for (int i = 0; i < M*K; i++) A[i] = 0.01f * (i+1);
+    for (int i = 0; i < K*N; i++) B[i] = 0.02f * (i+1);
+    float *dA,*dB,*dC,*dCref;
+    constexpr size_t smemsz = glass::nvidia::gemm_scratch_bytes<float, 16, 16, 16>();
+    constexpr uint32_t tc = glass::nvidia::gemm_threads<float, 16, 16, 16>();
+    CUDA_CHECK(cudaMalloc(&dA, M*K*4)); CUDA_CHECK(cudaMalloc(&dB, K*N*4));
+    CUDA_CHECK(cudaMalloc(&dC, M*N*4)); CUDA_CHECK(cudaMalloc(&dCref, M*N*4));
+    CUDA_CHECK(cudaMemcpy(dA, A.data(), M*K*4, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(dB, B.data(), K*N*4, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(dC, Cpoison.data(), M*N*4, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(dCref, Cpoison.data(), M*N*4, cudaMemcpyHostToDevice));
+    k_gemm_16x16x16_dx<<<1, tc, smemsz>>>(dA, dB, dC);
+    k_gemm_16x16x16_simt<<<1, 64>>>(dA, dB, dCref);
+    CUDA_CHECK(cudaDeviceSynchronize());
+    CUDA_CHECK(cudaMemcpy(Cdev.data(), dC, M*N*4, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(Cref.data(), dCref, M*N*4, cudaMemcpyDeviceToHost));
+    int nonfinite = 0;
+    for (int i = 0; i < M*N; i++)
+        nonfinite += !std::isfinite(Cdev[i]) + !std::isfinite(Cref[i]);
+    float err = max_abs_diff(Cref, Cdev);
+    std::printf("nonfinite=%d err=%.3e %s\n", nonfinite, err,
+                (nonfinite || err > 1e-4f) ? "FAIL" : "PASS");
+    cudaFree(dA); cudaFree(dB); cudaFree(dC); cudaFree(dCref);
+    return nonfinite || err > 1e-4f;
+}
+
 static int op_dispatch_q() {
     // print_dispatch is host-callable per query_simt.cuh.
     glass::nvidia::print_dispatch<float, 6, 6, 6>();
@@ -240,6 +276,7 @@ int main(int argc, char** argv) {
     if (!std::strcmp(op, "gemv_simt"))    return op_gemv_simt();
     if (!std::strcmp(op, "strided_gemv")) return op_strided_gemv();
     if (!std::strcmp(op, "strided_gemm")) return op_strided_gemm();
+    if (!std::strcmp(op, "beta0_poison")) return op_beta0_poison();
     if (!std::strcmp(op, "dispatch_q"))   return op_dispatch_q();
     std::fprintf(stderr, "unknown op: %s\n", op);
     return 2;

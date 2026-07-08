@@ -19,7 +19,7 @@ namespace cgrps = cooperative_groups;
  * @param alpha  Scalar multiplier on the product.
  * @param A      Input matrix.
  * @param x      Input vector.
- * @param beta   Scalar multiplier on the existing y (y is read; caller must initialize it).
+ * @param beta   Scalar multiplier on the existing y (read only when `beta != 0`).
  * @param y      In/out result vector.
  * @param g      Cooperative thread group (defaults to the whole block).
  */
@@ -68,7 +68,7 @@ __device__ void gemv(uint32_t m, uint32_t n, T alpha, const T *A, const T *x, T 
  * @param alpha  Scalar multiplier on the product.
  * @param A      Input matrix.
  * @param x      Input vector.
- * @param beta   Scalar multiplier on the existing y (y is read; caller must initialize it).
+ * @param beta   Scalar multiplier on the existing y (read only when `beta != 0`).
  * @param y      In/out result vector.
  * @param g      Cooperative thread group (defaults to the whole block).
  */

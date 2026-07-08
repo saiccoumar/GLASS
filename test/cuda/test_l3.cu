@@ -165,6 +165,11 @@ __global__ void k_chol_simple(int n, float* A) {
 __global__ void k_trsm_cg(int n, int nrhs, const float* A, float* B) {
     glass::cgrps::trsm(n, (uint32_t)nrhs, A, B);
 }
+__global__ void k_trsm_cg_t(int n, int nrhs, const float* A, float* B) {
+    // Transpose-flag instantiation: de-gates the 8 formerly-pinned cg skips.
+    glass::cgrps::trsm<float, glass::FillMode::Lower, glass::Diag::NonUnit, true>(
+        n, (uint32_t)nrhs, A, B);
+}
 __global__ void k_trsm_simple(int n, int nrhs, const float* A, float* B) {
     glass::trsm<float>(n, nrhs, A, B);
 }
@@ -336,9 +341,10 @@ int main(int argc, char** argv) {
         int transpose = atoi(argv[5]);
         float* dL = read_device_vec(argv[6], n * n);
         float* dB = read_device_vec(argv[7], n * nrhs);
-        if (cg)             k_trsm_cg<<<1, THREADS>>>(n, nrhs, dL, dB);
-        else if (transpose) k_trsm_simple_t<<<1, THREADS>>>(n, nrhs, dL, dB);
-        else                k_trsm_simple<<<1, THREADS>>>(n, nrhs, dL, dB);
+        if (cg && transpose)  k_trsm_cg_t<<<1, THREADS>>>(n, nrhs, dL, dB);
+        else if (cg)          k_trsm_cg<<<1, THREADS>>>(n, nrhs, dL, dB);
+        else if (transpose)   k_trsm_simple_t<<<1, THREADS>>>(n, nrhs, dL, dB);
+        else                  k_trsm_simple<<<1, THREADS>>>(n, nrhs, dL, dB);
         cudaDeviceSynchronize();
         print_device_vec(dB, n * nrhs);
 

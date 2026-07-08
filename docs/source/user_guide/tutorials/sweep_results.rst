@@ -139,5 +139,39 @@ kernel, composed GLASS calls never pay the API floor again.
 Both harnesses live in ``bench/`` and rerun via
 ``python3 bench/paper_sweeps.py`` (see ``bench/PAPER_SWEEPS.md``).
 
+Choosing among the dense solve paths (measured guidance)
+---------------------------------------------------------
+
+GLASS deliberately ships **no** auto-dispatch between its linear-system
+solvers — the right choice depends on structure and conditioning, which a
+compile-time table cannot see. Instead, ``bench/tune.py --legs solvers``
+measures the trade-offs on your GPU and records them in
+``bench/SOLVERS_SWEEP_RESULTS.md``. The RTX 5090 numbers (NPROB=8192,
+ns/problem):
+
+**SPD single solve — use ``posv``; the alternatives price as follows.**
+``gesv`` (pivoted LU, the robustness fallback) costs 1.0–2.1× ``posv`` in
+fp32 at ``N`` ≥ 16 (1.8–2.1× at 32–64); the invert-then-multiply
+anti-pattern (``inv`` + ``gemv``) costs 1.9–4.7× at ``N`` ≥ 16. **Below**
+``N`` = 16 all three paths are within a few nanoseconds of each other (and
+``inv``/``gesv`` can even edge out ``posv``, especially in fp64) — there,
+choose by *numerics*, not speed: Cholesky is backward-stable on SPD input and
+fails loudly (with ``CHECK``) on indefinite input, while an explicit inverse
+amplifies conditioning error silently. Speed only ever argues *for* ``posv``,
+never against it.
+
+**Block-tridiagonal chains — ``bdsv`` (direct) vs ``pcg`` (iterative) is
+problem-dependent; do not hard-code either.** On our diagonally-dominant test
+system PCG converges in ~3 iterations and wins 11 of 12 cells (up to 9×); at
+(BlockSize=12, Knots=16) fp32 the direct sweep wins 1.8×. PCG's cost scales
+linearly with its iteration count, so an ill-conditioned Riccati/KKT chain
+(10–100× more iterations) moves the crossover proportionally toward
+``bdsv`` — read the ``pcg iters`` column of your own sweep before
+generalizing, or measure with your actual matrices.
+
+**``syev`` / ``eig_clamp``** — the decompose–clamp–reconstruct op costs the
+same as the bare eigensolve (the clamp epilogue is free); budget ~0.9 µs
+fp32 / ~8.8 µs fp64 per 32×32 problem at saturation.
+
 See :doc:`../concepts/tuning` for how to emit a per-host override table from a
 sweep, and :doc:`../../api_reference/defaults` for the picker API.

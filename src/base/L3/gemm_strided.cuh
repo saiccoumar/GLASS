@@ -30,7 +30,7 @@
  * @tparam B_RS  Column stride (leading dimension) of B (default K).
  * @param alpha  Scalar multiplier on the product.
  * @param A,B    Input matrices (column-major, strided).
- * @param beta   Scalar multiplier on the existing C (C is read; caller must initialize it).
+ * @param beta   Scalar multiplier on the existing C (read only when `beta != 0`).
  * @param C      In/out result matrix (column-major, LDC = M).
  */
 template <typename T, uint32_t M, uint32_t N, uint32_t K,
@@ -44,7 +44,7 @@ __device__ void gemm_strided(T alpha, const T* A, const T* B, T beta, T* C)
         T res = static_cast<T>(0);
         for (uint32_t k = 0; k < K; k++)
             res += A[m + k * A_RS] * B[k + n * B_RS];
-        C[m + n * M] = alpha * res + beta * C[m + n * M];
+        C[m + n * M] = beta_blend(alpha * res, beta, C[m + n * M]);
     }
 }
 

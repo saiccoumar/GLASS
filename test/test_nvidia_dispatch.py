@@ -29,6 +29,8 @@ def _run(nvidia_bin, op):
     "gemv_simt",      # Gap A — gemv 6x6 SIMT
     "strided_gemv",   # Gap B — non-tight stride
     "strided_gemm",   # Gap C — non-tight A_RS/B_RS
+    "beta0_poison",   # beta==0 write-only through BOTH routes (NaN-poisoned C);
+                      # pins the cuBLASDx vendor behavior (MathDx 26.03) + SIMT beta_blend
 ])
 def test_dispatch_op(bin_nvidia_dispatch, op):
     rc, stdout, stderr = _run(bin_nvidia_dispatch, op)

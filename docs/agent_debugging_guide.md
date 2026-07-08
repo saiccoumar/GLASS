@@ -127,26 +127,37 @@ self-adapts to the launch.
 - **How to localize:** run at `THREADS=1` (forces full serialization — if it now passes, you have
   a race or a coverage gap) versus many threads, and bisect.
 
-### 1c. `beta = 0` GEMM still READS C → `0 * NaN = NaN` poisoning
+### 1c. `beta = 0` semantics — FIXED library-wide (2026-07-08): destinations are write-only
 
-GLASS's beta-form GEMM computes `C[cidx] = alpha*res + beta*C[cidx]` — it **reads `C` even when
-`beta == 0`** (see `gemm_impl` in `src/base/L3/gemm.cuh`, and the docstrings explicitly say
-"C is read; caller must initialize it"). If `C` is an **uninitialized scratch slot**, its leftover
-bit pattern can be `NaN`/`Inf`, and `0 * NaN == NaN` poisons the result even though beta is 0.
+**Historical bug class, now closed at the primitive level.** GLASS's beta-form ops used to compute
+`C[cidx] = alpha*res + beta*C[cidx]` unconditionally — reading `C` even when `beta == 0`, so an
+**uninitialized scratch slot** holding leftover `NaN`/`Inf` poisoned the result (`0 * NaN == NaN`).
+This is exactly how GRiD's generated RNEA NaN'd (2026-07-08): the v/a forward-pass gemvs write cold
+`s_vaf` shared memory with `beta = 0`, and a diverged rollout kernel had left NaN on the SM.
 
-- **Where this applies:** every beta-taking path — `glass::gemm` / `gemm_impl`,
-  `gemm_tiled`, `gemm_strided`, and the `_1d` batched variants — when called with
-  `beta = 0` into a destination the caller did not initialize.
-- **The fix:** the **caller must initialize `C`** before a `beta = 0` write into cold scratch
-  (a tiny `for (i=rank; i<size; i+=size) C[i] = 0;` + `__syncthreads()`), OR use a GLASS
-  overload that has no `beta*C` term. `gemm.cuh` provides implicit-`beta=0` overloads (the
-  `gemm` forms documented "with implicit `beta = 0`") that write `C` directly and never
-  read it — prefer those for write-into-fresh-scratch.
-- **The tell:** a discrepancy that is **thread-count-dependent and vanishes when isolated / run at
-  1 thread** is the signature of reading cold scratch (the leftover bytes are nondeterministic
-  across launches; at 1 thread the slot is more reliably overwritten before re-read). Reproduce
-  flakes by running the check many times, not once. `test_gemm_strided` already parametrizes
-  `(alpha,beta) = (1.0, 0.0)` for exactly this reason — keep beta=0 cases in any new GEMM test.
+- **The guarantee (BLAS/cuBLAS convention, now enforced):** when `beta == 0` the destination is
+  **write-only** — it need not hold a valid value on input. Every beta-taking blend routes through
+  `beta_blend(acc, beta, dst)` in `src/base/barrier.cuh`, which reads `dst` only under
+  `beta != 0`. Covered: `gemv` / `gemv_strided` / `gemv_segmented` / `gemv_reduced`, `gemm`
+  (untiled + tile4 + tiled) / `gemm_strided` / `gemm_reduced`, `syrk` / `syrk_reduced`, `symm`,
+  `congruence`, `axpby` — block, `warp::`, and `cgrps::` surfaces (shared impls).
+- **When you write a NEW beta-taking op:** use `beta_blend`, never a raw `alpha*res + beta*dst`.
+  The no-beta overloads remain preferred for write-into-fresh-scratch (they also skip the
+  runtime compare).
+- **The regression net:** `test_l2.py::test_gemv*_beta0_poisoned_y_no_read` and
+  `test_l3.py::test_gemm_rt_betaform_beta0_no_read` call the BETA overloads with `beta = 0` into a
+  NaN-poisoned destination and require a clean result; `test_gemm_rt_beta0_no_read` covers the
+  no-beta overloads. Keep poisoned-destination beta=0 cases in any new beta-form test.
+- **The `nvidia::` surface honors the same guarantee** — audited 2026-07-08: `l3_simt.cuh`
+  forwards to the fixed base cores, and the cuBLASDx route was probed empirically (poison ∈
+  {0, 1e30, NaN} → bit-identical output, f32+f64): `cublasdx::execute` does not blend a
+  `beta == 0` destination on MathDx 26.03. That vendor behavior is PINNED by
+  `test_nvidia_dispatch.py::test_dispatch_op[beta0_poison]` — if a future MathDx bump breaks it,
+  that test fails and the fix is to zero-fill `c_smem` instead of staging `C` when `beta == 0`.
+- **The historical tell (if you ever see it again):** a discrepancy that is thread-count-dependent,
+  nondeterministic across launches, and vanishes at 1 thread is the signature of reading cold
+  scratch. Sanitizers do NOT catch read-of-uninitialized **shared** memory — qNaN-poison the
+  arena to prove it (see GRiD/PDDP heavy-robustness notes).
 
 ### 1d. Storage-order / layout-flag mistakes
 

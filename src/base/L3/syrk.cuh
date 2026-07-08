@@ -49,10 +49,10 @@ __device__ void syrk_impl(uint32_t rank, uint32_t size,
             res += ar * ac;
         }
         uint32_t cidx = ROW_MAJOR ? (row*n + col) : (col*n + row);
-        C[cidx] = alpha*res + beta*C[cidx];
+        C[cidx] = beta_blend(alpha*res, beta, C[cidx]);
         if (FILL == FillMode::Full && row != col) {
             uint32_t midx = ROW_MAJOR ? (col*n + row) : (row*n + col);
-            C[midx] = alpha*res + beta*C[midx];
+            C[midx] = beta_blend(alpha*res, beta, C[midx]);
         }
     }
 }
@@ -111,10 +111,10 @@ __device__ void syrk_impl_ct(uint32_t rank, uint32_t size,
             res += ar * ac;
         }
         uint32_t cidx = ROW_MAJOR ? (row*N + col) : (col*N + row);
-        C[cidx] = alpha*res + beta*C[cidx];
+        C[cidx] = beta_blend(alpha*res, beta, C[cidx]);
         if (FILL == FillMode::Full && row != col) {
             uint32_t midx = ROW_MAJOR ? (col*N + row) : (row*N + col);
-            C[midx] = alpha*res + beta*C[midx];
+            C[midx] = beta_blend(alpha*res, beta, C[midx]);
         }
     }
 }
@@ -179,10 +179,10 @@ __device__ void syr2k_impl(uint32_t rank, uint32_t size,
             res += ar*bc + br*ac;
         }
         uint32_t cidx = ROW_MAJOR ? (row*n + col) : (col*n + row);
-        C[cidx] = alpha*res + beta*C[cidx];
+        C[cidx] = beta_blend(alpha*res, beta, C[cidx]);
         if (FILL == FillMode::Full && row != col) {
             uint32_t midx = ROW_MAJOR ? (col*n + row) : (row*n + col);
-            C[midx] = alpha*res + beta*C[midx];
+            C[midx] = beta_blend(alpha*res, beta, C[midx]);
         }
     }
 }
@@ -246,10 +246,10 @@ __device__ void syr2k_impl_ct(uint32_t rank, uint32_t size,
             res += ar*bc + br*ac;
         }
         uint32_t cidx = ROW_MAJOR ? (row*N + col) : (col*N + row);
-        C[cidx] = alpha*res + beta*C[cidx];
+        C[cidx] = beta_blend(alpha*res, beta, C[cidx]);
         if (FILL == FillMode::Full && row != col) {
             uint32_t midx = ROW_MAJOR ? (col*N + row) : (row*N + col);
-            C[midx] = alpha*res + beta*C[midx];
+            C[midx] = beta_blend(alpha*res, beta, C[midx]);
         }
     }
 }
@@ -308,7 +308,7 @@ __device__ void syr2k_impl_ct(uint32_t rank, uint32_t size,
  * @param k  Contraction length.
  * @param alpha  Scalar multiplier on the product.
  * @param A  Input matrix (n x k if TRANSPOSE=false, else k x n).
- * @param beta  Scalar multiplier on the existing C (C is read; caller must initialize it).
+ * @param beta  Scalar multiplier on the existing C (read only when `beta != 0`).
  * @param C  In/out n x n symmetric result matrix.
  *
  * NumPy equivalent: TRANSPOSE=false → `alpha * A @ A.T + beta * C`;
@@ -372,7 +372,7 @@ __device__ void syrk(uint32_t n, uint32_t k, T alpha, const T *A, T *C)
  * @tparam ROW_MAJOR  Storage order for A and C (false = column-major / Fortran).
  * @param alpha  Scalar multiplier on the product.
  * @param A  Input matrix (N x K if TRANSPOSE=false, else K x N).
- * @param beta  Scalar multiplier on the existing C (C is read; caller must initialize it).
+ * @param beta  Scalar multiplier on the existing C (read only when `beta != 0`).
  * @param C  In/out N x N symmetric result matrix.
  *
  * NumPy equivalent: TRANSPOSE=false → `alpha * A @ A.T + beta * C`;
@@ -435,7 +435,7 @@ __device__ void syrk(T alpha, const T *A, T *C)
  * @param k  Contraction length.
  * @param alpha  Scalar multiplier on the symmetrized product.
  * @param A,B  Input matrices (n x k if TRANSPOSE=false, else k x n).
- * @param beta  Scalar multiplier on the existing C (C is read; caller must initialize it).
+ * @param beta  Scalar multiplier on the existing C (read only when `beta != 0`).
  * @param C  In/out n x n symmetric result matrix.
  *
  * NumPy equivalent: TRANSPOSE=false → `alpha*(A@B.T + B@A.T) + beta*C`;
@@ -497,7 +497,7 @@ __device__ void syr2k(uint32_t n, uint32_t k, T alpha, const T *A, const T *B, T
  * @tparam ROW_MAJOR  Storage order for A, B and C (false = column-major / Fortran).
  * @param alpha  Scalar multiplier on the symmetrized product.
  * @param A,B  Input matrices (N x K if TRANSPOSE=false, else K x N).
- * @param beta  Scalar multiplier on the existing C (C is read; caller must initialize it).
+ * @param beta  Scalar multiplier on the existing C (read only when `beta != 0`).
  * @param C  In/out N x N symmetric result matrix.
  *
  * NumPy equivalent: TRANSPOSE=false → `alpha*(A@B.T + B@A.T) + beta*C`;

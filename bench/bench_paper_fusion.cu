@@ -315,6 +315,8 @@ static void run_shape(Handles H, const char* dt) {
         std::vector<Row> rows = {
             {"fused_tb32",  [&]{ fused(32); }},
             {"fused_tb128", [&]{ fused(128); }},
+            {"fused_tb256", [&]{ fused(256); }},   // wide-block probe: the (36,12)/(48,16)
+            {"fused_tb512", [&]{ fused(512); }},   // chain-wins cells may be TB-starved
             {"chain",       chain},
         };
         for (auto& r : rows) {

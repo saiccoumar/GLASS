@@ -31,15 +31,19 @@
  * @brief Should a contraction-parallel `*_reduced` op be preferred over the serial one?
  *
  * Codegen / launch-time picker seeded by the measured crossover sweep
- * (`bench/REDUCED_SWEEP_RESULTS.md`, RTX 5090 / sm_120). On that hardware the
- * `*_reduced` family is **slower than serial in almost every configuration** —
- * it pays a warp-shuffle latency per output and idles most lanes when the
- * contraction is short. It is competitive only in the narrow corner where every
- * output gets its own warp (`n_out <= blockDim/32`, so no serial output loop on
- * top of the shuffle) AND the contraction is long enough to fill a warp and
- * amortize the shuffle tail (`K_contract >= 32`). Returns `false` otherwise —
- * i.e. recommends serial almost always. Not a device function (the choice is a
- * launch/codegen decision); `constexpr` so it folds at compile time.
+ * (`bench/REDUCED_SWEEP_RESULTS.md`). **On sm_120 the measured answer is NO
+ * everywhere**: the quiet-GPU resweep of 2026-07-08 found 0 of 48
+ * configurations where `*_reduced` beats serial by more than the ±5% tie
+ * margin — the family pays a warp-shuffle latency per output and idles most
+ * lanes at short contractions, and even the former long-contraction corner
+ * (`n_out <= blockDim/32 && K_contract >= 32`) collapsed into the noise band.
+ * So this returns `false` unconditionally; it keeps its original signature as
+ * the seam where a retune on different hardware (e.g. Jetson Orin, whose
+ * shuffle/FMA balance differs) can reinstate a data-derived corner without
+ * touching call sites. The `*_reduced` ops stay in the library for
+ * expressiveness and fusion, not speed. Not a device function (the choice is
+ * a launch/codegen decision); `constexpr` so the `if constexpr` at call sites
+ * folds to the serial path with zero cost.
  *
  * @tparam n_out       Output element count (e.g. M*K for gemm, M for gemv).
  * @tparam K_contract  Length of the contracted dimension.
@@ -48,7 +52,7 @@
  */
 template <uint32_t n_out, uint32_t K_contract, uint32_t blockDim>
 __host__ __device__ constexpr bool suggested_use_reduced() {
-    return (n_out <= blockDim / 32u) && (K_contract >= 32u);
+    return false;   // measured: 0/48 wins on sm_120 (2026-07-08 quiet sweep, ±5% margin)
 }
 
 // Core: explicit (rank,size), compile-time dims + standard-BLAS layout flags
@@ -80,7 +84,7 @@ __device__ void gemm_reduced_impl_ct(uint32_t rank, uint32_t size,
             }
             T res = reduced_tree32<T>(p);
             const uint32_t cidx = ROW_MAJOR_C ? (m*N + n) : (m + n*M);
-            C[cidx] = HAS_BETA ? (alpha*res + beta*C[cidx]) : (alpha*res);
+            C[cidx] = HAS_BETA ? beta_blend(alpha*res, beta, C[cidx]) : (alpha*res);
         }
         return;
     }
@@ -102,7 +106,7 @@ __device__ void gemm_reduced_impl_ct(uint32_t rank, uint32_t size,
             T res = warp::reduce<T>(partial);   // full mask: warp is full
             if (lane == 0) {
                 const uint32_t cidx = ROW_MAJOR_C ? (m*N + n) : (m + n*M);
-                C[cidx] = HAS_BETA ? (alpha*res + beta*C[cidx]) : (alpha*res);
+                C[cidx] = HAS_BETA ? beta_blend(alpha*res, beta, C[cidx]) : (alpha*res);
             }
         }
     }
@@ -130,7 +134,7 @@ __device__ void gemm_reduced_impl_ct(uint32_t rank, uint32_t size,
  * @tparam TRAILING_SYNC  Emit a trailing `__syncthreads()` (default true) so callers can read C safely.
  * @param alpha  Scalar multiplier on the product.
  * @param A,B    Input matrices.
- * @param beta   Scalar multiplier on the existing C (C is read; caller must initialize it).
+ * @param beta   Scalar multiplier on the existing C (read only when `beta != 0`).
  * @param C      In/out result matrix.
  */
 template <typename T, uint32_t M, uint32_t N, uint32_t K,
@@ -189,7 +193,7 @@ namespace warp {
      * @tparam TRAILING_SYNC  Emit a trailing `__syncwarp()` (default true) so lanes can read C safely.
      * @param alpha  Scalar multiplier on the product.
      * @param A,B    Input matrices.
-     * @param beta   Scalar multiplier on the existing C (C is read; caller must initialize it).
+     * @param beta   Scalar multiplier on the existing C (read only when `beta != 0`).
      * @param C      In/out result matrix.
      */
     template <typename T, uint32_t M, uint32_t N, uint32_t K,

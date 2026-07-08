@@ -56,3 +56,39 @@ template <uint32_t V>
 struct ct_size {
     __host__ __device__ constexpr operator uint32_t() const { return V; }
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// beta_blend — BLAS beta==0 semantics for every beta-taking op.
+//
+// BLAS (and cuBLAS) guarantee that when `beta == 0` the destination is
+// WRITE-ONLY: it need not hold a valid value on input. A naive
+// `alpha*res + beta*dst` breaks that guarantee — `0 * NaN == NaN`, so cold
+// scratch left as NaN by a previous kernel poisons the result even though
+// beta is zero (found 2026-07-08: GRiD's generated RNEA passes beta=0 gemvs
+// over uninitialized s_vaf smem; diverged rollouts leave NaN on the SM and
+// the "zero" blend propagates it). The beta != 0 arm is an EXPLICIT fused
+// multiply-add intrinsic, not `acc + beta*dst`: a plain expression leaves the
+// FMA-contraction choice to ptxas, which decides per kernel and broke
+// warp-vs-block bit-identity (test_syrk_warp); a single FFMA/DFMA is the same
+// instruction in every instantiation. The compiler cannot fold the select
+// away, because `beta*dst == 0` does not hold for floats. Every beta-form op
+// must route its blend through this helper. (Bit-note vs the pre-helper code:
+// results are identical at beta ∈ {0, 1} — every consumer's case — and may
+// differ in the last ULP at fractional beta, where the old code's contraction
+// was unspecified anyway.)
+// ─────────────────────────────────────────────────────────────────────────────
+__device__ __forceinline__ float beta_blend_fma(float acc, float beta, float dst) {
+    return __fmaf_rn(beta, dst, acc);
+}
+__device__ __forceinline__ double beta_blend_fma(double acc, double beta, double dst) {
+    return __fma_rn(beta, dst, acc);
+}
+template <typename T>
+__device__ __forceinline__ T beta_blend_fma(T acc, T beta, T dst) {
+    return acc + beta * dst;
+}
+
+template <typename T>
+__device__ __forceinline__ T beta_blend(T acc, T beta, const T &dst) {
+    return (beta != static_cast<T>(0)) ? beta_blend_fma(acc, beta, dst) : acc;
+}
