@@ -27,7 +27,9 @@ All ship in the three SIMT surfaces (``glass::`` block, ``glass::warp::``,
    RTX 5090 (sm_120), the contraction-parallel decomposition is **slower than the
    plain serial in-thread contraction in 47 of 48 swept shapes**, often by
    10–100× (full table: ``bench/REDUCED_SWEEP_RESULTS.md``), and the
-   :cpp:func:`glass::suggested_use_reduced` picker declines it almost everywhere.
+   :cpp:func:`glass::suggested_use_reduced` picker now declines it everywhere
+   (retired to constant ``false`` after the 2026-07-08 quiet resweep measured
+   0/48 wins under the ±5% tie margin).
    **Prefer the plain ops** (``gemm`` / ``gemv`` / ``syrk``) for throughput;
    reach for this family only for the fused forms (``tensor_vec_contract``,
    ``vec_tensor_vec``, ``congruence_sym``, ``bilinear``) that the serial surface
@@ -62,14 +64,16 @@ every configuration** — 47 of 48 swept shapes lose, often by 10–100×. The s
 ``gemm`` over shared-resident data is a tight per-thread loop that is very hard to
 beat at these sizes, while ``*_reduced`` pays a ~5-step shuffle latency per output
 and, at the typical short contraction (K = 14–21), leaves most of a warp's lanes
-idle. The *only* win in the swept space was ``n_out = 4, K = 64`` at ``blockDim
-≥ 128`` — and only by ~1.1×. So there is no "~14×"; the realistic story is "use
-serial unless you are in a tiny, well-characterized corner."
+idle. The earlier shared-GPU sweep showed one marginal win (``n_out = 4,
+K = 64`` at ``blockDim ≥ 128``, ~1.1×); the quiet-GPU resweep of 2026-07-08
+collapsed even that cell into the ±5% noise band — **0 of 48 configurations
+pick reduced**. So there is no "~14×", and no corner either; the realistic
+story is "use serial."
 
-:cpp:func:`glass::suggested_use_reduced` encodes that corner —
-``n_out <= blockDim/32`` (every output owns a warp) **and** ``K_contract >= 32``
-(long enough to fill a warp and amortize the shuffle) — and returns ``false``
-otherwise, i.e. recommends serial almost always:
+:cpp:func:`glass::suggested_use_reduced` encodes that measurement — it returns
+``false`` unconditionally on sm_120, and keeps its ``<n_out, K_contract,
+blockDim>`` signature as the seam where a retune on different hardware (e.g.
+Jetson Orin) can reinstate a data-derived corner without touching call sites:
 
 .. code-block:: cuda
 

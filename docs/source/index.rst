@@ -77,10 +77,11 @@ The **contraction-parallel + fused family** (``gemm_reduced`` / ``gemv_reduced``
 ``syrk_reduced``, the ``tensor_vec_contract`` / ``vec_tensor_vec`` /
 ``congruence_sym`` / ``bilinear`` ops, ``riccati_gain``, and compile-out
 robustness flags on ``potrf`` / ``ldlt`` / ``posv``) is there for
-**expressiveness and fusion only**: the ``*_reduced`` decomposition measured
-*slower* than the plain serial in-thread contraction in **47 of 48 swept shapes**
-(``bench/REDUCED_SWEEP_RESULTS.md``), and the ``suggested_use_reduced<>`` picker
-declines it almost everywhere — **prefer the plain ops for throughput**. See
+**expressiveness and fusion only**: on a quiet GPU the ``*_reduced``
+decomposition measured slower than the plain serial in-thread contraction in
+**48 of 48 swept shapes** (±5% margin, ``bench/REDUCED_SWEEP_RESULTS.md``), and
+the ``suggested_use_reduced<>`` picker now declines it everywhere — **prefer
+the plain ops for throughput**. See
 :doc:`user_guide/concepts/contraction_parallel` for the measurement and
 :doc:`user_guide/concepts/namespaces` for the naming convention.
 

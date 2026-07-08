@@ -31,15 +31,19 @@
  * @brief Should a contraction-parallel `*_reduced` op be preferred over the serial one?
  *
  * Codegen / launch-time picker seeded by the measured crossover sweep
- * (`bench/REDUCED_SWEEP_RESULTS.md`, RTX 5090 / sm_120). On that hardware the
- * `*_reduced` family is **slower than serial in almost every configuration** —
- * it pays a warp-shuffle latency per output and idles most lanes when the
- * contraction is short. It is competitive only in the narrow corner where every
- * output gets its own warp (`n_out <= blockDim/32`, so no serial output loop on
- * top of the shuffle) AND the contraction is long enough to fill a warp and
- * amortize the shuffle tail (`K_contract >= 32`). Returns `false` otherwise —
- * i.e. recommends serial almost always. Not a device function (the choice is a
- * launch/codegen decision); `constexpr` so it folds at compile time.
+ * (`bench/REDUCED_SWEEP_RESULTS.md`). **On sm_120 the measured answer is NO
+ * everywhere**: the quiet-GPU resweep of 2026-07-08 found 0 of 48
+ * configurations where `*_reduced` beats serial by more than the ±5% tie
+ * margin — the family pays a warp-shuffle latency per output and idles most
+ * lanes at short contractions, and even the former long-contraction corner
+ * (`n_out <= blockDim/32 && K_contract >= 32`) collapsed into the noise band.
+ * So this returns `false` unconditionally; it keeps its original signature as
+ * the seam where a retune on different hardware (e.g. Jetson Orin, whose
+ * shuffle/FMA balance differs) can reinstate a data-derived corner without
+ * touching call sites. The `*_reduced` ops stay in the library for
+ * expressiveness and fusion, not speed. Not a device function (the choice is
+ * a launch/codegen decision); `constexpr` so the `if constexpr` at call sites
+ * folds to the serial path with zero cost.
  *
  * @tparam n_out       Output element count (e.g. M*K for gemm, M for gemv).
  * @tparam K_contract  Length of the contracted dimension.
@@ -48,7 +52,7 @@
  */
 template <uint32_t n_out, uint32_t K_contract, uint32_t blockDim>
 __host__ __device__ constexpr bool suggested_use_reduced() {
-    return (n_out <= blockDim / 32u) && (K_contract >= 32u);
+    return false;   // measured: 0/48 wins on sm_120 (2026-07-08 quiet sweep, ±5% margin)
 }
 
 // Core: explicit (rank,size), compile-time dims + standard-BLAS layout flags
