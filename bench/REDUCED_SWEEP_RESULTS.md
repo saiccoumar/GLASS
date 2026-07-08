@@ -53,7 +53,7 @@ their own serial code before adopting them for speed.
 <!-- BEGIN tune.py: latest measured run -->
 ## Latest measured run (auto-refreshed by `bench/tune.py`)
 
-_Source: `reduced_sweep_20260704_2322.txt` · tie margin ±5% (reduced must clear it) · 0 of 48 configs pick reduced._
+_Source: `reduced_sweep_20260708_0056.txt` · tie margin ±5% (reduced must clear it) · 0 of 48 configs pick reduced._
 
 Predicate `suggested_use_reduced<n_out,K_contract,blockDim>()` = `(n_out <= blockDim/32) && (K_contract >= 32)` (K_contract is the N column here).
 
