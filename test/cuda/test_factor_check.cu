@@ -4,7 +4,9 @@
 //
 // Usage:
 //   cholchk <block|warp|cgrps> <THREADS> <N> <A.bin>   -> "<fail>\n<L (N*N)>"
-//   ldltchk <THREADS> <N> <A.bin>                      -> "<fail> <npos> <nneg> <nzero>\n<LD (N*N)>"
+//   ldltchk <THREADS> <N> <A.bin> [pivot]              -> "<fail> <npos> <nneg> <nzero>\n<LD (N*N)>"
+//     [pivot] optional (default 0): 1 = Bunch-Kaufman pivoted factorization
+//     (inertia then counts 2x2 blocks as one positive + one negative).
 
 #include <cstdio>
 #include <cstdlib>
@@ -43,12 +45,13 @@ __global__ void k_cholchk_warp(float* A, int* fail) {
     for (uint32_t i = threadIdx.x; i < N*N; i += blockDim.x) A[i] = s[i];
 }
 
-__global__ void k_ldltchk(int n, float* A, int* fail, int* inertia) {
+__global__ void k_ldltchk(int n, float* A, int* fail, int* inertia, int pivot, int32_t* piv) {
     extern __shared__ float s[];
     float* sA = s; float* st = s + n*n;
     for (int i = threadIdx.x; i < n*n; i += blockDim.x) sA[i] = A[i];
     __syncthreads();
-    glass::ldlt<float, true>((uint32_t)n, sA, st, false, nullptr, fail, inertia);
+    glass::ldlt<float, true>((uint32_t)n, sA, st, pivot != 0,
+                             pivot != 0 ? piv : nullptr, fail, inertia);
     __syncthreads();
     for (int i = threadIdx.x; i < n*n; i += blockDim.x) A[i] = sA[i];
 }
@@ -61,10 +64,12 @@ int main(int argc, char** argv) {
 
     if (strcmp(op, "ldltchk") == 0) {
         int th = atoi(argv[2]); int n = atoi(argv[3]);
+        int pivot = (argc > 5) ? atoi(argv[5]) : 0;
         float* dA = read_device_vec(argv[4], n*n);
         int *dFail, *dIn; cudaMalloc(&dFail, sizeof(int)); cudaMalloc(&dIn, 3*sizeof(int));
+        int32_t* dPiv; cudaMalloc(&dPiv, n*sizeof(int32_t));
         int smem = (n*n + n + 1) * sizeof(float);
-        k_ldltchk<<<1, th, smem>>>(n, dA, dFail, dIn);
+        k_ldltchk<<<1, th, smem>>>(n, dA, dFail, dIn, pivot, dPiv);
         cudaDeviceSynchronize();
         int fail, in[3];
         cudaMemcpy(&fail, dFail, sizeof(int), cudaMemcpyDeviceToHost);

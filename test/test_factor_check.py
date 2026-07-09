@@ -41,10 +41,10 @@ def _cholchk(binary, surf, th, n, A):
         os.unlink(f)
 
 
-def _ldltchk(binary, th, n, A):
+def _ldltchk(binary, th, n, A, pivot=0):
     f = _w(A)
     try:
-        r = subprocess.run([str(binary), "ldltchk", str(th), str(n), f],
+        r = subprocess.run([str(binary), "ldltchk", str(th), str(n), f, str(pivot)],
                            capture_output=True, text=True)
         if r.returncode != 0:
             raise RuntimeError(r.stderr)
@@ -95,3 +95,54 @@ def test_ldlt_check_zero_pivot(bins):
     Z = np.array([[0, 1, 0], [1, 2, 0], [0, 0, 3]], dtype=np.float32)
     sc, _ = _ldltchk(bins["factor_check"], 64, 3, Z.copy())
     assert sc[0] == 1, "zero pivot must set fail=1"
+
+
+# ─── pivoted (Bunch–Kaufman) CHECK reporting ──────────────────────────────────
+
+@pytest.mark.parametrize("n", LDLT_N)
+@pytest.mark.parametrize("th", [1, 64, 128])
+def test_ldlt_check_inertia_pivoted(bins, n, th):
+    """Pivoted inertia == eigenvalue signs (a 2×2 block counts one +, one −)."""
+    M = RNG.random((n, n)).astype(np.float64)
+    S = M + M.T + np.diag(RNG.choice([-2.0, 2.0], size=n)) * n
+    sc, _ = _ldltchk(bins["factor_check"], th, n, S.astype(np.float32).copy(), pivot=1)
+    fail, npos, nneg, nzero = sc
+    ev = np.linalg.eigvalsh(S)
+    epos, eneg = int((ev > 1e-6).sum()), int((ev < -1e-6).sum())
+    assert fail == 0 and nzero == 0, f"nonsingular should not flag: {sc}"
+    assert (npos, nneg) == (epos, eneg), f"inertia {npos,nneg} != eig signs {epos,eneg}"
+
+
+@pytest.mark.parametrize("n", [2, 4, 6])
+def test_ldlt_check_inertia_pivoted_2x2(bins, n):
+    """All-zero-diagonal (2×2 pivots mandatory): inertia still == eig signs."""
+    while True:
+        B = RNG.standard_normal((n, n))
+        S = np.triu(B, 1) + np.triu(B, 1).T
+        if np.linalg.svd(S, compute_uv=False)[-1] > 0.1:
+            break
+    sc, _ = _ldltchk(bins["factor_check"], 96, n, S.astype(np.float32).copy(), pivot=1)
+    fail, npos, nneg, nzero = sc
+    ev = np.linalg.eigvalsh(S)
+    epos, eneg = int((ev > 1e-6).sum()), int((ev < -1e-6).sum())
+    assert fail == 0 and nzero == 0, f"nonsingular should not flag: {sc}"
+    assert (npos, nneg) == (epos, eneg), f"inertia {npos,nneg} != eig signs {epos,eneg}"
+
+
+def test_ldlt_check_pivoted_handles_zero_leading(bins):
+    """The matrix that breaks the NON-pivoted path (zero leading diagonal)
+    factors cleanly under Bunch–Kaufman: fail=0, correct inertia."""
+    Z = np.array([[0, 1, 0], [1, 2, 0], [0, 0, 3]], dtype=np.float32)
+    sc, _ = _ldltchk(bins["factor_check"], 64, 3, Z.copy(), pivot=1)
+    fail, npos, nneg, nzero = sc
+    ev = np.linalg.eigvalsh(Z.astype(np.float64))
+    assert fail == 0, f"pivoted path should not flag a nonsingular matrix: {sc}"
+    assert (npos, nneg, nzero) == (int((ev > 0).sum()), int((ev < 0).sum()), 0)
+
+
+def test_ldlt_check_pivoted_singular_flags(bins):
+    """A singular matrix (zero working column) sets fail=1 under the pivoted path."""
+    S = np.zeros((3, 3), dtype=np.float32)
+    S[0, 0] = 1.0                     # rank-1: steps 1,2 hit all-zero columns
+    sc, _ = _ldltchk(bins["factor_check"], 64, 3, S.copy(), pivot=1)
+    assert sc[0] == 1, f"singular matrix must set fail=1: {sc}"

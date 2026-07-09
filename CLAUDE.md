@@ -65,8 +65,8 @@ Recent L1/L2/L3 additions (all single-block, thread-count invariant): `iamax`
 `FillMode`/`Diag` enums + `TRANSPOSE` flag) and `trsm` (L3 multi-RHS triangular solve,
 same flags); `syrk` / `syr2k` (L3 symmetric rank-k/2k,
 both `AAᵀ` and `AᵀA` via a `TRANSPOSE` flag, `FillMode` Lower/Upper/Full); `ldlt` /
-`ldlt_solve` (L3 symmetric-indefinite LDLᵀ, non-pivoted, signature reserves
-`bool pivot`/`piv` for a future Bunch-Kaufman path); `posv` / `potrs` (L3 SPD
+`ldlt_solve` (L3 symmetric-indefinite LDLᵀ, non-pivoted by default, opt-in
+Bunch-Kaufman pivoting via `bool pivot`/`int32_t* piv`); `posv` / `potrs` (L3 SPD
 solve = chol + 2×`trsv`); and **K-way fused** `inv` / `potrf`
 (invert/factor K independent matrices interleaved over one block — `inv2`/`inv3`,
 the 2-/3-matrix `inv` wrappers, are now thin wrappers). The `warp::` surface mirrors most of the block L1
@@ -75,9 +75,10 @@ reduction/vector family plus `gemv`/`gemm`/`syrk`/`syr2k`, the factor/solve chai
 
 Robust/perf variants (perf user vs robustness user): `inv_pivoted`
 (partial-pivoting Gauss-Jordan, robust on small/zero leading pivots), `ldlt(...,
-pivot=true, piv)` (symmetric 1×1 diagonal pivoting; full Bunch-Kaufman 2×2 still
-deferred), and multi-RHS `posv`/`potrs` (`(n, nrhs, A, B)` — factor once, solve N
-columns; B column-major).
+pivot=true, piv)` (full Bunch-Kaufman 1×1/2×2 partial pivoting — LAPACK `sytf2`;
+`piv` is int32, negative entries mark 2×2 blocks; handles zero diagonals like
+`[[0,1],[1,0]]`; block path only — `warp::ldlt` stays non-pivoted), and multi-RHS
+`posv`/`potrs` (`(n, nrhs, A, B)` — factor once, solve N columns; B column-major).
 
 Contraction-parallel + higher-level families (block + `warp::` + `cgrps::`, all
 single-block, thread-count invariant; see

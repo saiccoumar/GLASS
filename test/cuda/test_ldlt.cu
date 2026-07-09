@@ -3,17 +3,19 @@
 // Usage:
 //   ./test_ldlt ldlt        <n> <threads> <pivot> <A.bin>
 //       Factors the symmetric n x n matrix A (column-major) in place and prints
-//       the n*n factored buffer (diagonal = D, strict-lower = unit-L). When
-//       <pivot> != 0, a SECOND line is printed: the n recorded pivot indices
-//       piv[0..n-1] (as floats), so the test can rebuild P for the
-//       L@diag(D)@L.T == P A Pᵀ reconstruction check.
+//       the n*n factored buffer (diagonal = D, strict-lower = unit-L; a 2x2
+//       pivot block keeps its off-diagonal D21 in the subdiagonal slot). When
+//       <pivot> != 0, a SECOND line is printed: the n recorded pivot entries
+//       piv[0..n-1] (signed ints — negative marks a 2x2 block, see ldlt.cuh),
+//       so the test can rebuild P and block-D for the
+//       L@D@L.T == P A Pᵀ reconstruction check.
 //
 //   ./test_ldlt ldlt_solve  <n> <threads> <pivot> <A.bin> <b.bin>
 //       Factors A (pivoted if <pivot> != 0) then solves A x = b and prints x.
 //
 // A.bin : n*n float32 (column-major). b.bin : n float32.
-// <pivot> : 0 = non-pivoted (piv = nullptr), 1 = symmetric 1x1 pivoting.
-// Scratch is allocated as (n+1) floats (used by the pivot path's argmax).
+// <pivot> : 0 = non-pivoted (piv = nullptr), 1 = Bunch-Kaufman 1x1/2x2 pivoting.
+// Scratch is allocated as (n+1) floats (used by the pivot path's argmax scans).
 
 #include <cstdio>
 #include <cstdlib>
@@ -23,12 +25,12 @@
 #include "helpers.cuh"
 #include "../../glass.cuh"
 
-__global__ void k_ldlt(uint32_t n, float* A, float* s_temp, int pivot, uint32_t* piv) {
+__global__ void k_ldlt(uint32_t n, float* A, float* s_temp, int pivot, int32_t* piv) {
     glass::ldlt<float>(n, A, s_temp, pivot != 0, pivot != 0 ? piv : nullptr);
 }
 
 __global__ void k_ldlt_solve(uint32_t n, float* A, float* s_temp, float* b,
-                             int pivot, uint32_t* piv) {
+                             int pivot, int32_t* piv) {
     glass::ldlt<float>(n, A, s_temp, pivot != 0, pivot != 0 ? piv : nullptr);
     glass::ldlt_solve<float>(n, A, b, pivot != 0 ? piv : nullptr);
 }
@@ -44,10 +46,10 @@ __global__ void k_ldlt_solve_warp(float* A, float* b) {
     glass::warp::ldlt_solve<float, N>(A, b);
 }
 
-// Print n device uint32 values (the pivot array) as space-separated ints.
-__global__ void print_piv_kernel(uint32_t* d, int n) {
+// Print n device int32 values (the pivot array) as space-separated ints.
+__global__ void print_piv_kernel(int32_t* d, int n) {
     for (int i = 0; i < n; i++) {
-        printf("%u", d[i]);
+        printf("%d", d[i]);
         if (i < n - 1) printf(" ");
     }
     printf("\n");
@@ -68,7 +70,7 @@ int main(int argc, char** argv) {
 
     float* dA     = read_device_vec(A_path, n * n);
     float* dscr;  cudaMalloc(&dscr, (n + 1) * sizeof(float));
-    uint32_t* dpiv; cudaMalloc(&dpiv, n * sizeof(uint32_t));
+    int32_t* dpiv; cudaMalloc(&dpiv, n * sizeof(int32_t));
 
     if (strcmp(op, "ldlt") == 0) {
         k_ldlt<<<1, threads>>>((uint32_t)n, dA, dscr, pivot, dpiv);

@@ -4,7 +4,9 @@ Oracle: split the factored buffer into unit-L + diagonal-D and assert
 L @ diag(D) @ L.T ≈ A; the solve asserts x ≈ np.linalg.solve(A, b) and the
 residual A@x - b ≈ 0. Covered for SPD and genuinely indefinite-but-nonsingular
 symmetric matrices (mixed-sign D — the differentiator vs Cholesky), across a
-thread sweep to pin thread-count invariance.
+thread sweep to pin thread-count invariance. The pivoted path is Bunch–Kaufman
+(1×1/2×2): block-diagonal D reconstruction against P A Pᵀ, near-zero leading
+pivots, and all-zero-diagonal matrices where a 2×2 pivot is mandatory.
 """
 
 import os
@@ -67,24 +69,58 @@ def _run(binary, op, n, threads, mats, pivot=0):
 
 
 def _perm_from_piv(piv):
-    """Rebuild the permutation vector applied by ldlt: forward sweep of swaps.
+    """Rebuild the permutation vector applied by ldlt: forward sweep of the
+    recorded Bunch–Kaufman interchanges (0-based LAPACK-style encoding).
 
-    Factor applies, at step k, swap(k, piv[k]) to the working matrix, so
-    P A Pᵀ = L D Lᵀ where P is that ordered product. Applying P to the identity
-    index vector reproduces the row permutation: perm[i] = (P @ arange(n))[i].
+    piv[k] >= 0: 1×1 pivot, swap(k, piv[k]). piv[k] < 0: 2×2 block at (k, k+1),
+    swap(k+1, -piv[k]-1), and piv[k+1] == piv[k]. P A Pᵀ = L D Lᵀ where P is
+    that ordered product; applying it to the identity index vector reproduces
+    the row permutation.
     """
     piv = [int(round(x)) for x in piv]
     perm = list(range(len(piv)))
-    for k, p in enumerate(piv):
-        perm[k], perm[p] = perm[p], perm[k]
+    k = 0
+    while k < len(piv):
+        if piv[k] >= 0:
+            p = piv[k]
+            perm[k], perm[p] = perm[p], perm[k]
+            k += 1
+        else:
+            p = -piv[k] - 1
+            perm[k + 1], perm[p] = perm[p], perm[k + 1]
+            k += 2
     return np.array(perm, dtype=int)
 
 
 def _split_LD(buf, n):
-    """Factored column-major n*n buffer → (unit-L, D-vector)."""
+    """Factored column-major n*n buffer → (unit-L, D-vector). Non-pivoted."""
     M = buf.reshape(n, n, order="F")
     L = np.tril(M, -1) + np.eye(n)
     D = np.diag(M).copy()
+    return L, D
+
+
+def _split_LD_bk(buf, n, piv):
+    """Pivoted (Bunch–Kaufman) factored buffer → (unit-L, block-diagonal D).
+
+    A 2×2 pivot block keeps its off-diagonal D21 in the subdiagonal slot
+    M[k+1, k]; that slot is part of D, and the corresponding L entry is
+    implicitly zero.
+    """
+    piv = [int(round(x)) for x in piv]
+    M = buf.reshape(n, n, order="F")
+    L = np.tril(M, -1) + np.eye(n)
+    D = np.zeros((n, n))
+    k = 0
+    while k < n:
+        D[k, k] = M[k, k]
+        if piv[k] >= 0:
+            k += 1
+        else:
+            D[k + 1, k + 1] = M[k + 1, k + 1]
+            D[k + 1, k] = D[k, k + 1] = M[k + 1, k]
+            L[k + 1, k] = 0.0        # slot holds D21, not an L entry
+            k += 2
     return L, D
 
 
@@ -139,16 +175,16 @@ def test_ldlt_solve(ldlt_bin, kind, n, threads):
     assert np.allclose(resid, 0.0, atol=ATOL), f"residual not zero: {resid}"
 
 
-# ─── pivoted (symmetric 1×1) factor + solve ──────────────────────────────────
+# ─── pivoted (Bunch–Kaufman 1×1/2×2) factor + solve ──────────────────────────
 
 def make_indef_small_leading(n):
     """Indefinite symmetric with a NEAR-ZERO leading diagonal block.
 
     The non-pivoted path divides by the tiny leading pivot and blows up; the
-    symmetric 1×1 pivot path swaps a large-magnitude diagonal to the front and
-    succeeds. Built by taking a well-conditioned indefinite matrix and shrinking
-    the top-left diagonal entries toward zero (kept nonzero so the matrix stays
-    nonsingular but the leading pivot is catastrophic without pivoting).
+    Bunch–Kaufman path pivots past it and succeeds. Built by taking a
+    well-conditioned indefinite matrix and shrinking the top-left diagonal
+    entries toward zero (kept nonzero so the matrix stays nonsingular but the
+    leading pivot is catastrophic without pivoting).
     """
     A = make_indefinite(n).astype(np.float64)
     # drive the first (and for n>=4 the second) diagonal entries to ~1e-6
@@ -161,13 +197,13 @@ def make_indef_small_leading(n):
 @pytest.mark.parametrize("n", [2, 3, 4, 6, 8])
 @pytest.mark.parametrize("threads", THREADS)
 def test_ldlt_pivot_factor_reconstruction(ldlt_bin, n, threads):
-    """Pivoted factor: L @ diag(D) @ L.T == P A Pᵀ using the recorded piv."""
+    """Pivoted factor: L @ D @ L.T == P A Pᵀ using the recorded piv (block-D)."""
     A = make_indef_small_leading(n)
     out = _run(ldlt_bin, "ldlt", n, threads, [A], pivot=1)
     factor, piv = out[0], out[1]
-    L, D = _split_LD(factor, n)
+    L, D = _split_LD_bk(factor, n, piv)
     perm = _perm_from_piv(piv)
-    recon = L @ np.diag(D) @ L.T
+    recon = L @ D @ L.T
     PAPt = A[np.ix_(perm, perm)]
     assert np.allclose(recon, PAPt, rtol=RTOL, atol=ATOL), (
         f"L@D@L.T != P A Pᵀ (n={n}, threads={threads})\n"
@@ -253,21 +289,72 @@ def test_ldlt_zero_pivot_limitation(ldlt_bin):
         "(if this ever passes cleanly, pivoting may have landed — update the test)")
 
 
-def test_ldlt_zero_diag_block_needs_2x2(ldlt_bin):
-    """[[0,1],[1,0]] still fails EVEN WITH symmetric 1×1 pivoting — it has a
-    structurally-zero remaining DIAGONAL (both D_eff are 0 at step 0), so no 1×1
-    pivot helps; it requires a 2×2 (Bunch–Kaufman) pivot, which is NOT
-    implemented. Documented known limitation; expected, non-strict.
+def make_zero_diag(n):
+    """Symmetric, NONSINGULAR, with an all-zero diagonal.
+
+    Every working diagonal is zero at step 0, so no 1×1 pivot exists — the
+    Bunch–Kaufman 2×2 path is the only way in. Built as a random strict
+    off-diagonal symmetric matrix, resampled until well-conditioned.
     """
+    while True:
+        B = RNG.standard_normal((n, n))
+        A = np.triu(B, 1) + np.triu(B, 1).T
+        s = np.linalg.svd(A, compute_uv=False)
+        if s[-1] > 0.1:
+            return A.astype(np.float32)
+
+
+@pytest.mark.parametrize("threads", THREADS)
+def test_ldlt_2x2_zero_diag_block(ldlt_bin, threads):
+    """[[0,1],[1,0]] — the canonical matrix with NO valid 1×1 pivot — factors
+    and solves via a Bunch–Kaufman 2×2 pivot (this was the documented
+    limitation before 2×2 landed)."""
     A = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32)
-    b = np.array([1.0, 1.0], dtype=np.float32)
-    x = _run(ldlt_bin, "ldlt_solve", 2, 64, [A, b], pivot=1)[0]
-    bad = (not np.all(np.isfinite(x))) or (
-        not np.allclose(A.astype(np.float64) @ x.astype(np.float64),
-                        b.astype(np.float64), atol=ATOL))
-    assert bad, (
-        f"1×1-pivoted LDLᵀ unexpectedly handled a zero diagonal BLOCK: x={x} "
-        "(would require 2×2 Bunch–Kaufman — if this passes, 2×2 may have landed)")
+    b = np.array([1.0, 2.0], dtype=np.float32)
+    out = _run(ldlt_bin, "ldlt", 2, threads, [A], pivot=1)
+    factor, piv = out[0], out[1]
+    piv_i = [int(round(v)) for v in piv]
+    assert piv_i[0] < 0 and piv_i[1] == piv_i[0], f"expected a 2×2 pivot, piv={piv_i}"
+    L, D = _split_LD_bk(factor, 2, piv)
+    perm = _perm_from_piv(piv)
+    assert np.allclose(L @ D @ L.T, A[np.ix_(perm, perm)], rtol=RTOL, atol=ATOL)
+    x = _run(ldlt_bin, "ldlt_solve", 2, threads, [A, b], pivot=1)[0]
+    assert np.allclose(x, [2.0, 1.0], rtol=RTOL, atol=ATOL), f"x={x} != [2, 1]"
+
+
+@pytest.mark.parametrize("n", [2, 4, 6, 8])
+@pytest.mark.parametrize("threads", THREADS)
+def test_ldlt_pivot_zero_diagonal(ldlt_bin, n, threads):
+    """All-zero-diagonal symmetric matrices (2×2 pivots mandatory at step 0)
+    factor to L@D@L.T == P A Pᵀ and solve to the numpy solution."""
+    A = make_zero_diag(n)
+    b = RNG.random(n).astype(np.float32)
+    out = _run(ldlt_bin, "ldlt", n, threads, [A], pivot=1)
+    factor, piv = out[0], out[1]
+    L, D = _split_LD_bk(factor, n, piv)
+    perm = _perm_from_piv(piv)
+    recon = L @ D @ L.T
+    PAPt = A[np.ix_(perm, perm)]
+    assert np.allclose(recon, PAPt, rtol=RTOL, atol=ATOL), (
+        f"L@D@L.T != P A Pᵀ (n={n}, threads={threads})\npiv={piv}\nD={D}")
+    x = _run(ldlt_bin, "ldlt_solve", n, threads, [A, b], pivot=1)[0]
+    x_ref = np.linalg.solve(A.astype(np.float64), b.astype(np.float64))
+    assert np.allclose(x, x_ref, rtol=RTOL, atol=ATOL), (
+        f"zero-diag x mismatch (n={n}, threads={threads})\ngot {x}\nref {x_ref}")
+
+
+@pytest.mark.parametrize("n", [4, 6, 8])
+def test_ldlt_pivot_zero_diagonal_thread_invariant(ldlt_bin, n):
+    """2×2-pivot-heavy factor (and recorded piv) identical across the thread sweep."""
+    A = make_zero_diag(n)
+    ref = _run(ldlt_bin, "ldlt", n, THREADS[0], [A], pivot=1)
+    for t in THREADS[1:]:
+        cur = _run(ldlt_bin, "ldlt", n, t, [A], pivot=1)
+        assert np.array_equal(cur[0], ref[0]), (
+            f"zero-diag pivoted factor thread non-invariant (n={n}, threads={t})")
+        assert np.array_equal(cur[1], ref[1]), (
+            f"zero-diag piv thread non-invariant (n={n}, threads={t}): "
+            f"{cur[1]} vs {ref[1]}")
 
 
 # ─── warp forms (non-pivoted; one 32-lane warp) ───────────────────────────────
