@@ -35,6 +35,14 @@ static_assert(gd::ideal_sm120(op::chol, 48, true) == backend::nvidia, "chol48 f6
 static_assert(gd::ideal_sm120(op::gemm, 64, true) == backend::block,  "gemm64 f64");
 static_assert(gd::ideal_sm120(op::posv, 64, true) == backend::nvidia, "posv64 f64");
 
+// ── per-arch dispatch: a measured SM hits its table, an unmeasured SM falls to generic ──
+static_assert(gd::ideal(op::gemm, 32, false, 1200u) == gd::ideal_sm120(op::gemm, 32, false), "sm_120 dispatches to its table");
+static_assert(gd::ideal(op::posv, 64, true,  1200u) == gd::ideal_sm120(op::posv, 64, true),  "sm_120 dispatches to its table (f64)");
+// (sentinel SMs no sweep will ever produce — a real new arch, e.g. sm_87 on Jetson,
+//  gets its own table + dispatch case from tune.py and must NOT be asserted generic here)
+static_assert(gd::ideal(op::gemm, 32, false, 0u) == gd::ideal_generic(op::gemm, 32, false), "unmeasured SM falls to generic");
+static_assert(gd::ideal(op::chol, 24, false, 1u) == gd::ideal_generic(op::chol, 24, false), "unmeasured SM falls to generic");
+
 // ── no-nvidia collapse (this TU links no vendor lib) ──
 static_assert(glass::suggested_backend<op::chol, 24, float>() == backend::warp,  "chol24 collapses to warp");
 static_assert(glass::suggested_backend<op::chol, 64, float>() == backend::block, "chol64 collapses to block");

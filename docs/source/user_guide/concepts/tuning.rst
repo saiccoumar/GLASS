@@ -114,8 +114,9 @@ These defaults are also exposed as ``constexpr`` helpers in ``glass-defaults.cuh
 config without hand-copying the table. Include it after ``glass.cuh`` (and after
 ``glass-nvidia.cuh`` to make the ``nvidia`` tier eligible; otherwise it collapses to the
 warp/block runner-up). The pick is host-/codegen-side because warp/block/nvidia need
-different ``<<<grid, block>>>`` launches. Numbers are sm_120-seeded; ``bench/tune.py``
-regenerates this ladder (and the tables below) for your GPU.
+different ``<<<grid, block>>>`` launches. Tables are per-arch (``ideal_sm120`` today)
+behind an SM dispatch; ``bench/tune.py --sm auto`` adds or refreshes your GPU's table
+(and the tables below) in-tree, leaving other arches' tables untouched.
 
 Why bother?
 -----------

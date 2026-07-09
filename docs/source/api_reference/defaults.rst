@@ -58,8 +58,13 @@ A runnable version is ``examples/09_backend_picker.cu``.
 Per-host override
 -----------------
 
-Numbers are seeded from RTX 5090 / sm_120. For another GPU, regenerate a per-host table from a
-sweep run and point ``GLASS_DEFAULTS_TABLE_LOCAL`` at it:
+The shipped tables are per-arch: each swept SM has its own ``constexpr`` ladder
+(``ideal_sm120`` today, measured on an RTX 5090) behind an SM dispatch, and running
+``bench/tune.py --sm auto`` on a new GPU (e.g. a Jetson Orin, sm_87) adds that arch's
+table + dispatch case in-tree without touching the others; unmeasured SMs fall back to
+a coarse heuristic. Alternatively, for a host-local override that leaves the shipped
+tables alone, regenerate a table from a sweep run and point
+``GLASS_DEFAULTS_TABLE_LOCAL`` at it:
 
 .. code-block:: bash
 

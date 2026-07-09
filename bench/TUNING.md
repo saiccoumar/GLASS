@@ -3,7 +3,10 @@
 ## One command — `bench/tune.py`
 
 GLASS ships three measured defaults tables: the warp/block/nvidia **backend
-ladder** (`glass-defaults.cuh`, consumed by `glass::suggested_backend<>`), the
+ladder** (`glass-defaults.cuh`, consumed by `glass::suggested_backend<>`; the
+tables are **per-arch** — the ladder leg replaces the marker block + dispatch
+case for the arch it measured, so a first-time GPU like a Jetson Orin gains an
+`ideal_sm87` alongside the shipped `ideal_sm120` instead of overwriting it), the
 per-(M,N,K) **cuBLASDx-vs-SIMT table** (`src/nvidia/tuning_table.cuh`, this
 document's main subject), and the serial-vs-reduced **`suggested_use_reduced<>`**
 predicate. `bench/tune.py` remeasures all of them on your GPU and regenerates
