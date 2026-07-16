@@ -95,14 +95,21 @@ LADDER_OPS = ("dot", "gemv", "gemm", "chol", "trsv", "posv")
 
 _HDR_RE = re.compile(r"NPROB=(\d+).*dtype=(f32|f64)")
 # Raw per-backend ns from a mega_sweep row:
-#   "<op>  N=<N> | BLOCK ... | WARP ... || block tb<TB>=<ns> warp w<WPB>=<ns> [nv=<ns>] -> ..."
+#   "<op>  N=<N> | BLOCK ... | WARP ... [| THREAD ...] || block tb<TB>=<ns>
+#    warp w<WPB>=<ns> [thread t<TPB>=<ns>] [nv=<ns>] -> ..."
+# The thread group is OPTIONAL on purpose: it is absent both from archived sweep
+# .txt files (every run before the tier existed — `tune.py --from-ladder` replays
+# them) and from live rows at N>16, where the harness skips the tier rather than
+# instantiate an absurd per-thread T[N*N]. Keep it optional or old sweeps stop
+# parsing and regen silently drops every op.
 _ROW_RE = re.compile(
     r"^(dot|gemv|gemm|chol|trsv|posv)\s+N=(\d+)\b.*\|\|\s*"
-    r"block\s+tb\d+=([\d.]+)\s+warp\s+w\d+=([\d.]+)(?:\s+nv=([\d.]+))?")
+    r"block\s+tb\d+=([\d.]+)\s+warp\s+w\d+=([\d.]+)"
+    r"(?:\s+thread\s+t\d+=([\d.]+))?(?:\s+nv=([\d.]+))?")
 
 
 def parse_mega_sweep(text, nprob=8192):
-    """``(dtype, op, N) -> {block, warp[, nvidia]}`` raw ns/problem at ``nprob``.
+    """``(dtype, op, N) -> {block, warp[, thread][, nvidia]}`` raw ns/problem at ``nprob``.
 
     Reads the raw per-backend numbers (NOT the harness's ``-> WINNER`` verdict,
     which is a bare argmin with no margin) so :func:`pick` can re-decide the
@@ -122,7 +129,9 @@ def parse_mega_sweep(text, nprob=8192):
             op, N = m.group(1), int(m.group(2))
             d = {"block": float(m.group(3)), "warp": float(m.group(4))}
             if m.group(5):
-                d["nvidia"] = float(m.group(5))
+                d["thread"] = float(m.group(5))   # absent in pre-tier sweeps and at N>16
+            if m.group(6):
+                d["nvidia"] = float(m.group(6))
             data[(dtype, op, N)] = d
     return data
 

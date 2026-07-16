@@ -5,8 +5,9 @@ for block-local linear algebra on GPUs** — BLAS, LAPACK-style factorizations a
 triangular solves, dense linear-system solvers, and related algorithms under one
 calling convention. Routines run **inside one CUDA block**: you launch one block
 per independent problem and the block's threads cooperate over data already in
-shared/global memory. Three primary interfaces — **Block** (`glass::`), **Warp**
-(`glass::warp::`, for packing many small problems into one block), and **Nvidia**
+shared/global memory. Four primary interfaces — **Block** (`glass::`), **Warp**
+(`glass::warp::`, for packing many small problems into one block), **Thread**
+(`glass::thread::`, one problem per thread for low-DOF packing), and **Nvidia**
 (`glass::nvidia::`, vendor-backed). GLASS is the foundational linear-algebra layer
 under [GRiD](https://github.com/A2R-Lab/GRiD), MPCGPU, GATO, HJCD-IK, and other
 A2R Lab GPU solvers.
@@ -33,16 +34,36 @@ threads (one warp runs lockstep), a race at 64+.
 
 ## Interfaces
 
-Three **primary interfaces** — **Block** (`glass::`), **Warp** (`glass::warp::`),
-and **Nvidia** (`glass::nvidia::`) — picked by how the problem maps onto the GPU.
-Block and Nvidia are block-scoped (one block per problem); Warp is warp-scoped (one
-warp per problem, for packing many small problems into a block):
+Four **primary interfaces** — **Block** (`glass::`), **Warp** (`glass::warp::`),
+**Thread** (`glass::thread::`), and **Nvidia** (`glass::nvidia::`) — picked by how the
+problem maps onto the GPU. Block and Nvidia are block-scoped (one block per problem);
+Warp is warp-scoped (one warp per problem); Thread is thread-scoped (one problem per
+THREAD, 32 packed per warp). The ladder runs most→least problem packing:
+thread → warp → block → nvidia.
 
 | Interface | Scope | What it is | Header |
 |-----------|-------|------------|--------|
 | `glass::` (Block) | block | Hand-rolled pure-SIMT (`threadIdx`/`blockDim`). No deps. | `glass.cuh` |
 | `glass::warp::` (Warp) | warp | Single-warp SIMT (`__shfl_*_sync`) mirroring most of the block surface — L1 reductions/vector ops, gemv/gemm/syrk, the factor/solve chain, tensor/congruence/riccati. Inline in the base L1/L2/L3 headers. | via `glass.cuh` |
+| `glass::thread::` (Thread) | thread | One problem per thread, for LOW-DOF packing (N≲7: a warp-per-problem factor leaves ~26/32 lanes idle; this packs 32 problems in the warp instead). Sequential — no barriers, no shuffles, no `threadIdx` read. The `ThreadBarrier` (rank=0, size=1, no-op sync) collapses the SAME `*_impl` bodies, so each op is **bit-identical to its `glass::` twin on one thread** (`test/test_thread.py` asserts exactly that). Ladder ops only: `dot`/`gemv`/`gemm`/`potrf`/`trsv`/`posv`/`potrs`. Inline in the base headers. | via `glass.cuh` |
 | `glass::nvidia::` (Nvidia) | block | CUB / cuBLASDx / cuSOLVERDx, auto-dispatched by size. Needs MathDx (`MATHDX_ROOT`). | `glass-nvidia.cuh` |
+
+**`glass::thread::` constraints (read before extending it):**
+- **Compile-time `N` only.** The tier's value is a register-resident `T A[N*N]`; a
+  runtime-`n` overload would silently spill and be strictly worse than `warp::`.
+- **Measured ceiling `N <= 7`** (BOTH dtypes; nvcc 12.0/sm_86). Not the 255-register
+  cap — an element-count threshold in nvcc's local-array promotion (49 promotes, 64
+  does not). `#pragma unroll` does NOT lift it. Past N=7 `A` lands in local memory and
+  the sweep shows the cliff directly (f32 gemv: 1.11ns at N=6 → 3.23ns at N=8).
+- **Branch-free ops only.** Every lane owns a DIFFERENT problem, so a data-dependent
+  branch diverges across the warp. Pivoted `ldlt`/`getrf`/`inv_pivoted`/`iamax` are
+  therefore excluded on purpose — the *robust* variants are the wrong ones here.
+- **No `_fast`/`_lowmem` twins.** Those name reduction STRATEGIES; one thread has none.
+  `thread::dot` returns a `T` (serial accumulate) instead of reducing in place.
+- **Barriers must route through `Bar`.** A raw `__syncthreads()` in a shared `*_impl`
+  is block-wide, so with one problem per thread (and a ragged tail block whose
+  out-of-range threads returned) it is a barrier with divergent participation ⇒ UB.
+  This is why `trsv_impl` grew a defaulted `Bar` param.
 
 `glass::cgrps::` (header `glass-cgrps.cuh`) is a **convenience alias** of the Block
 interface — identical numerics (the same SIMT loop, indexed via a `thread_group`),

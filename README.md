@@ -126,6 +126,8 @@ The README is a landing page; the deep reference lives in the
 ## Notes / gotchas
 
 - **One block per problem.** Every function runs inside a single block; launch `<<<num_items, threads>>>`.
+  Exception: `glass::thread::` is one problem per THREAD (`<<<ceil(P/TPB), TPB>>>`) — for low-DOF
+  packing (N≲7, compile-time size only). See CLAUDE.md for its constraints.
 - **Column-major by default** (Fortran order, matching cuBLAS). GEMM uses `TRANSPOSE_A` /
   `TRANSPOSE_B` + `ROW_MAJOR_C` (a row-major operand is just a transpose); GEMV keeps a
   per-matrix `ROW_MAJOR` flag (its transpose changes the math op); `glass::nvidia::` uses the
