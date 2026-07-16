@@ -122,11 +122,12 @@ static void launch_warp(Op op, int WPB, T* A, T* B, T* C, T* x, T* y) {
 //       pyroffi IK case (A = JᵀJ built on-chip); no memory traffic to attribute,
 //       so it trivially wins and would be a meaningless table entry.
 //
-// Gated to N<=16: past that a per-thread T[N*N] is absurd (N=128/f32 would be a
-// 64KB-per-thread local array). The measured register-residency ceiling is N<=7
-// (both dtypes); 12 and 16 are swept anyway so the crossover is visible rather
-// than assumed.
-template<typename T,int N> static constexpr bool thread_ok() { return N <= 16; }
+// Gated to N<=64 (TESTING ONLY — was N<=16; raised to see the local-memory
+// cliff past the measured N<=7 register-residency ceiling directly, rather than
+// stopping short of it). Past 64 a per-thread T[N*N] gets absurd (N=128/f32
+// would be a 64KB-per-thread local array); 24/32/48/64 are swept anyway so the
+// falloff is visible rather than assumed.
+template<typename T,int N> static constexpr bool thread_ok() { return N <= 64; }
 
 template<typename T,int N> __global__ void kt_dot (T* x, T* y, int np) { int p=blockIdx.x*blockDim.x+threadIdx.x; if(p>=np)return; T r=glass::thread::dot<T,N>(x+(size_t)p*N, y+(size_t)p*N); y[(size_t)p*N]=r; }
 template<typename T,int N> __global__ void kt_gemv(T* A, T* x, T* y, int np) {
@@ -401,7 +402,7 @@ static void bench_size(Op op, int reps) {
     // 4-way winner. thread/warp/block are all dependency-free pure SIMT, so they
     // compete on raw time; only nvidia (MathDx) must clear tune_pick's margin —
     // hence `base` is the best of the three SIMT tiers, as before, now including
-    // thread where it ran (N<=16).
+    // thread where it ran (N<=64).
     const bool has_thread = (best_thread < 1e29);
     double base = best_block; const char* base_winner = "BLOCK";
     if (best_warp < base)               { base = best_warp;   base_winner = "WARP"; }
@@ -440,7 +441,7 @@ int main(int argc, char** argv) {
     bool f64 = (strcmp(dt, "f64") == 0 || strcmp(dt, "fp64") == 0 || strcmp(dt, "double") == 0);
     { int v = 48*1024; cudaDeviceGetAttribute(&v, cudaDevAttrMaxSharedMemoryPerBlockOptin, 0); g_optin_smem = (size_t)v; }
     printf("# mega sweep | NPROB=%d reps=%d dtype=%s | ns/problem (lower=better) | optin_smem=%zuKB\n", NPROB, reps, f64 ? "f64" : "f32", g_optin_smem/1024);
-    printf("# contenders: BLOCK(SIMT, TB swept) | WARP(WPB swept) | THREAD(SIMT, TPB swept; N<=16 only) | NV(cuBLASDx/cuSOLVERDx, forced; f32<=128, f64<=64)\n");
+    printf("# contenders: BLOCK(SIMT, TB swept) | WARP(WPB swept) | THREAD(SIMT, TPB swept; N<=64 only) | NV(cuBLASDx/cuSOLVERDx, forced; f32<=128, f64<=64)\n");
     printf("# THREAD stages operands global->registers->global in the per-problem-contiguous layout (uncoalesced; the layout tax is IN the timing).\n");
     if (f64) run_all<double>(reps);
     else     run_all<float>(reps);

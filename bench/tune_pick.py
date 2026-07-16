@@ -234,6 +234,15 @@ if __name__ == "__main__":
         "nvidia 10% faster than warp → clears margin"
     assert pick({"block": 100, "warp": 99}, 0.05, {"nvidia"}) == "warp", \
         "warp/block both simple → cheapest"
+    # thread tier: dependency-free SIMT alongside warp/block — cheapest of the
+    # three wins with no margin (a structural launch change, like warp, is not
+    # margin-gated); nvidia still must clear the margin over the SIMT incumbent.
+    assert pick({"block": 100, "warp": 90, "thread": 60}, 0.05, {"nvidia"}) == "thread", \
+        "thread cheapest SIMT tier → wins (low-DOF packing)"
+    assert pick({"block": 100, "warp": 90, "thread": 91}, 0.05, {"nvidia"}) == "warp", \
+        "thread not cheapest → warp keeps it"
+    assert pick({"block": 100, "warp": 90, "thread": 60, "nvidia": 59}, 0.05, {"nvidia"}) == "thread", \
+        "nvidia inside margin of the thread incumbent → thread"
     assert pick({"nvidia": 50}, 0.05, {"nvidia"}) == "nvidia", "only nvidia measured"
     assert pick({"block": 0, "warp": None}, 0.05) is None, "nothing valid"
     assert pick({"serial": 1.0, "reduced": 0.90}, 0.05, {"reduced"}) == "reduced", \
@@ -243,6 +252,20 @@ if __name__ == "__main__":
     # verdict noise floor.
     w, note = verdict({"simt": 0.02, "cublasdx": 0.01}, 0.05, {"cublasdx"}, noise_floor=0.05)
     assert w == "simt" and "noise floor" in note, note
+    # parse_mega_sweep(): thread column optional — present at low N, absent at
+    # high N and in pre-tier archived sweeps.
+    _mg = "\n".join([
+        "################ NPROB=8192  reps=250  dtype=f32 ################",
+        "dot   N=4   | BLOCK  tb32=1.00 | WARP  w1=0.80 | THREAD  t256=0.30"
+        "  || block tb32=1.00  warp w1=0.80  thread t256=0.30  nv=2.00 -> THREAD",
+        "posv  N=64  | BLOCK  tb32=5.00 | WARP  w1=6.00"
+        "  || block tb32=5.00  warp w1=6.00  nv=3.00 -> NV",
+    ])
+    _mc = parse_mega_sweep(_mg)
+    assert _mc[("f32", "dot", 4)] == {"block": 1.0, "warp": 0.8, "thread": 0.3, "nvidia": 2.0}, _mc
+    assert _mc[("f32", "posv", 64)] == {"block": 5.0, "warp": 6.0, "nvidia": 3.0}, \
+        "thread absent at high N parses as block/warp/nvidia only"
+    assert pick(_mc[("f32", "dot", 4)], 0.05, {"nvidia"}) == "thread", "dot N=4 → thread wins"
     # parse_blas2(): 2-way rows, warp leg optional, ldlt/ldltsv disambiguation.
     _b2 = "\n".join([
         "################ NPROB=8192  reps=250  dtype=f32 ################",
