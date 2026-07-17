@@ -8,6 +8,7 @@ Each binary is compiled with nvcc against the local glass.cuh.
 import hashlib
 import os
 import pathlib
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -446,12 +447,19 @@ def run_op(binary: pathlib.Path, op: str, version: str, args: list, inputs: list
             f.close()
             tmpfiles.append(f.name)
 
-        cmd = [str(binary), op, version] + [str(a) for a in args] + tmpfiles
+        # GLASS_RUN_PREFIX lets a wrapper (e.g. compute-sanitizer) wrap every
+        # kernel launch. Sanitizer diagnostics go to stderr, so parsed stdout
+        # stays clean; pair with --error-exitcode so a finding trips returncode.
+        prefix = shlex.split(os.environ.get("GLASS_RUN_PREFIX", ""))
+        cmd = prefix + [str(binary), op, version] + [str(a) for a in args] + tmpfiles
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            raise RuntimeError(f"Binary failed:\n{result.stderr}")
+            raise RuntimeError(f"Binary failed:\n{result.stdout}\n{result.stderr}")
 
-        lines = [l.strip() for l in result.stdout.strip().split("\n") if l.strip()]
+        # Drop compute-sanitizer's own "=========" banner lines (stdout) so the
+        # numeric parse below is unaffected when GLASS_RUN_PREFIX wraps the launch.
+        lines = [l.strip() for l in result.stdout.strip().split("\n")
+                 if l.strip() and not l.lstrip().startswith("=========")]
         if len(lines) == 1:
             return np.fromstring(lines[0], sep=" ").astype(np.float32)
         else:
